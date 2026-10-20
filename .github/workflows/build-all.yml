@@ -1,0 +1,78 @@
+name: Build Toota Audio plugins for macOS
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - plugin: Augur6
+            product: Augur-6
+            au: "aumu Agr6 Toot"
+          - plugin: Interlock
+            product: Interlock
+            au: "aufx Itlk Toot"
+          - plugin: Varia
+            product: Varia
+            au: "aufx Vria Toot"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure universal build (Intel + Apple Silicon)
+        working-directory: ${{ matrix.plugin }}
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Build VST3 and AU
+        working-directory: ${{ matrix.plugin }}
+        run: cmake --build build --config Release --target ${{ matrix.plugin }}_VST3 ${{ matrix.plugin }}_AU -j 4
+
+      - name: Sign and collect
+        run: |
+          VST3=$(find ${{ matrix.plugin }}/build -type d -name "${{ matrix.product }}.vst3" | head -1)
+          AU=$(find ${{ matrix.plugin }}/build -type d -name "${{ matrix.product }}.component" | head -1)
+          codesign --force --deep --sign - "$VST3"
+          codesign --force --deep --sign - "$AU"
+          mkdir -p out
+          cp -R "$VST3" "$AU" out/
+
+      - name: Validate Audio Unit
+        continue-on-error: true
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R out/*.component ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 3
+          auval -v ${{ matrix.au }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ matrix.plugin }}
+          path: out
+
+  package:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: part-*
+          merge-multiple: true
+          path: Toota-Audio-Plugins
+      - name: Package
+        run: |
+          cp install.sh README.md Toota-Audio-Plugins/
+          chmod +x Toota-Audio-Plugins/install.sh
+          ls -la Toota-Audio-Plugins
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Toota-Audio-Plugins-macOS
+          path: Toota-Audio-Plugins

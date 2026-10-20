@@ -1,63 +1,48 @@
-# Augur-6
+# Toota Audio plugins
 
-A six-voice analog-modelled polysynth (VST3 + Audio Unit) for Ableton Live, built around the classic
-two-oscillator, poly-mod, low-pass-into-high-pass architecture of late-'70s/2010s American polysynths.
-42 factory presets, level-matched, ready to play.
+Three VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
 
-## Getting it onto your Mac (one-off, about 10 minutes)
+| Plugin | What it is | Folder |
+|---|---|---|
+| **Augur-6** | Six-voice analog-modelled polysynth, 42 presets | `Augur6/` |
+| **Interlock** | Kick + bass balancer: auto-learned dynamic EQ dip, sub duck, bass focus and parallel compression | `Interlock/` |
+| **Varia** | Movement and variation: per-hit changes, filter/stereo drift and phrase-end fills (rolls, throws, reverse swells, gates, tape stops) | `Varia/` |
 
-The plugin is compiled for you by GitHub's free Mac build servers, so you don't need Xcode.
+## Installing
 
-1. Create a free account at github.com if you don't have one.
-2. Click **New repository**, call it `augur-6`, set it to **Private**, and create it.
-3. On the empty repo page, click **uploading an existing file**.
-4. In Finder, open this `Augur6` folder and press **Cmd + Shift + .** so the hidden `.github` folder shows.
-   Select **everything** inside the folder (including `.github`) and drag it into the browser. Commit.
-5. Open the **Actions** tab. A build called *Build Augur-6 for macOS* starts automatically (about 8 minutes).
-6. When it shows a green tick, open it and download **Augur-6-macOS** at the bottom of the page.
-7. Unzip it (it may be a zip inside a zip), open Terminal, type `bash ` (with a space), drag `install.sh`
-   from the unzipped `Augur-6` folder onto the Terminal window, and press Return.
-8. In Ableton Live: **Settings > Plug-Ins**, make sure *Use VST3 Plug-In System Folders* and
-   *Use Audio Units v2* are on, then press **Rescan**. Augur-6 appears under **Plug-Ins > Toota Audio**.
+Every push builds all three on GitHub. Open the **Actions** tab, click the latest green run, download
+**Toota-Audio-Plugins-macOS**, unzip it, then in Terminal type `bash ` and drag `install.sh` in, press Return.
+In Live: **Settings > Plug-Ins > Rescan**. They appear under **Plug-Ins > Toota Audio**.
 
-The build is a universal binary, so the same file runs on Intel and Apple Silicon Macs (macOS 11 or later).
+## Interlock: quick start
 
-## Presets
+1. Put Interlock on your **bass** track.
+2. In the device title bar, open the sidechain section (the small triangle) and set **Audio From** to your **kick** track.
+   The header should read *SIDECHAIN: KICK DETECTED*.
+3. Play kick and bass together. Interlock listens for about five seconds the first time and sets itself up:
+   kick fundamental, dip depth and width, sub duck, release (tempo-aware), the best "bass focus" frequency and
+   the parallel compressor threshold. Press **RE-LEARN** any time the bassline or kick changes.
+4. Fine-tune by dragging the **KICK DIP** and **BASS FOCUS** nodes on the display (mouse wheel on the kick node changes width),
+   or with the knobs. **DELTA** lets you hear only what Interlock is changing.
 
-Use the **< >** arrows or click the program name to pick by category. All factory sounds are original.
+How it works: the kick is low-passed around its fundamental and turned into an envelope that's normalised to the
+kick's own recent hits, so every hit gets the full dip regardless of level and the bass comes straight back as the kick decays.
+The dip is a dynamic bell at the kick fundamental plus a dynamic low shelf (Sub Duck); Bass Focus is a static bell
+where the bass has energy but the kick doesn't. A parallel compressor (threshold set from the learned bass level, raised by Drive)
+is blended in with Mix to keep the bass dense between kicks. Mono Lows folds stereo content under ~120 Hz to mono.
 
-| Category | Presets |
-|---|---|
-| Pads | Velvet Horizon, Glass Cathedral, Slow Bloom, Dusk Strings, Night Bus PWM, Balearic Sunset, Afterglow |
-| Brass | Gold Brass, Fanfare Stack, Soft Horns, Brass '82 |
-| Keys | Ivory Poly, Electric Bell, Clav Funk, Hollow Organ, Velour Keys |
-| Bass | Mono Muscle, Rubber Sub, Sync Growl, Acid Ladder, Deep Pulse Bass, Wide Unison Bass |
-| Leads | Sync Scream, Silk Lead, Square Hero, Whistle Pipe, Feral Lead |
-| Plucks | Glass Pluck, House Stab, Marimba Mod, Harp Strum, Arp Pulse, Muted Pluck |
-| Poly | Eighties Poly, Motor City Chord, Sweep Machine, Sync Brass Poly |
-| FX | Wind Tunnel, Random Bleeps, Laser Rain, Wobble Voices, Sci-Fi Drone |
+## Varia: quick start
 
-To keep your own sounds, tweak a preset and use Live's **Save Preset** button on the device title bar.
-Edited presets show a `*` after the name. Everything is saved with your Live Set.
+Put it on any channel or bus with the transport running. **TEXTURE** (the big orb) is the master amount:
+at 0 the plugin is completely transparent, higher values make the variation more frequent and deeper.
+Pick a **style** with `< >` or by clicking the name.
 
-## Signal flow
+* **Release**: tail length (echo feedback, gate smoothing, reverse length).
+* **Brightness**: tone of the added movement and how far filter sweeps close.
+* **Width**: stereo movement (mono-compatible, works on the side signal only).
+* **Pitch**: transposes rolls, reverse swells and tape stops.
+* **Wet Only**: hear only the added events. **Bypass**: click-free bypass.
 
-**Osc 1** (tri > saw > pulse morph, pulse width, sub-octave, hard sync to Osc 2) and **Osc 2**
-(morphing shape, fine tune, low-frequency mode, key-track off for drones) plus noise feed a
-**4-pole resonant ladder low-pass**, then a **2-pole resonant high-pass**, then the **amp envelope**.
-
-* **Poly Mod**: filter envelope and Osc 2 modulate Osc 1 pitch, shape, pulse width, and either filter, per voice.
-  Osc 2 in Low Freq mode turns it into a per-voice LFO.
-* **LFO**: five shapes, free or synced to Live's tempo; depth = Amount + Mod Wheel.
-* **Slop**: per-voice drift and component tolerance, for the slightly unstable analog feel.
-* **Unison**: stacks 2-6 voices on one note with detune and stereo spread; plays mono with last-note priority.
-* **Effects**: drive, stereo chorus, tempo-synced ping-pong delay, reverb.
-* Velocity, mod wheel, pitch bend, aftertouch (to cutoff) and sustain pedal all respond.
-* Double-click any knob to reset it. Drag the bottom-right corner to resize the window.
-
-## Building locally (optional)
-
-```
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release --target Augur6_VST3 Augur6_AU
-```
+Styles: Groove, Club Rolls, Dub Throws, Filter Ride, Glitch, Reverse Tide, Tape Stop, Breathe, Peak Time, Minimal, Wide Drift, Chaos.
+Events are placed on the grid at 2, 4 or 8-bar phrase ends (by style) with smaller fills on ordinary bars, and are chosen at
+random each time, so loops never repeat exactly. Nothing is added over silence.
