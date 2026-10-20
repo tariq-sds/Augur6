@@ -11,50 +11,55 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - plugin: Augur6
-            product: Augur-6
-            au: "aumu Agr6 Toot"
-          - plugin: Interlock
-            product: Interlock
-            au: "aufx Itlk Toot"
-          - plugin: Varia
-            product: Varia
-            au: "aufx Vria Toot"
+          - folder: Augur6
+            targets: "Augur6_VST3 Augur6_AU"
+            au: "aumu:Agr6"
+          - folder: Interlock
+            targets: "Interlock_VST3 Interlock_AU"
+            au: "aufx:Itlk"
+          - folder: Varia
+            targets: "Varia_VST3 Varia_AU"
+            au: "aufx:Vria"
+          - folder: Clarion
+            targets: "Clarion_VST3 Clarion_AU ClarionRoom_VST3 ClarionRoom_AU"
+            au: "aufx:Clrn aufx:Clrm"
     steps:
       - uses: actions/checkout@v4
 
       - name: Configure universal build (Intel + Apple Silicon)
-        working-directory: ${{ matrix.plugin }}
+        working-directory: ${{ matrix.folder }}
         run: >
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
           -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
 
       - name: Build VST3 and AU
-        working-directory: ${{ matrix.plugin }}
-        run: cmake --build build --config Release --target ${{ matrix.plugin }}_VST3 ${{ matrix.plugin }}_AU -j 4
+        working-directory: ${{ matrix.folder }}
+        run: cmake --build build --config Release --target ${{ matrix.targets }} -j 4
 
       - name: Sign and collect
         run: |
-          VST3=$(find ${{ matrix.plugin }}/build -type d -name "${{ matrix.product }}.vst3" | head -1)
-          AU=$(find ${{ matrix.plugin }}/build -type d -name "${{ matrix.product }}.component" | head -1)
-          codesign --force --deep --sign - "$VST3"
-          codesign --force --deep --sign - "$AU"
           mkdir -p out
-          cp -R "$VST3" "$AU" out/
+          find "${{ matrix.folder }}/build" -type d \( -name "*.vst3" -o -name "*.component" \) -path "*_artefacts/*" -prune | while read -r p; do
+            codesign --force --deep --sign - "$p"
+            cp -R "$p" out/
+          done
+          ls -la out
 
-      - name: Validate Audio Unit
+      - name: Validate Audio Units
         continue-on-error: true
         run: |
           mkdir -p ~/Library/Audio/Plug-Ins/Components
           cp -R out/*.component ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar 2>/dev/null || true
           sleep 3
-          auval -v ${{ matrix.au }}
+          for code in ${{ matrix.au }}; do
+            auval -v ${code%%:*} ${code##*:} Toot
+          done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: part-${{ matrix.plugin }}
+          name: part-${{ matrix.folder }}
           path: out
 
   package:

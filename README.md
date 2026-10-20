@@ -7,6 +7,7 @@ Three VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Sil
 | **Augur-6** | Six-voice analog-modelled polysynth, 42 presets | `Augur6/` |
 | **Interlock** | Kick + bass balancer: auto-learned dynamic EQ dip, sub duck, bass focus and parallel compression | `Interlock/` |
 | **Varia** | Movement and variation: per-hit changes, filter/stereo drift and phrase-end fills (rolls, throws, reverse swells, gates, tape stops) | `Varia/` |
+| **Clarion** + **Clarion Room** | Vocal clarity pair: vocal EQ, de-ess, clarity, groove-glued parallel compression, vocal ride, key detection and key/root matching; Room carves the music only where the vocal needs space | `Clarion/` |
 
 ## Installing
 
@@ -46,3 +47,25 @@ Pick a **style** with `< >` or by clicking the name.
 Styles: Groove, Club Rolls, Dub Throws, Filter Ride, Glitch, Reverse Tide, Tape Stop, Breathe, Peak Time, Minimal, Wide Drift, Chaos.
 Events are placed on the grid at 2, 4 or 8-bar phrase ends (by style) with smaller fills on ordinary bars, and are chosen at
 random each time, so loops never repeat exactly. Nothing is added over silence.
+
+## Clarion: quick start
+
+Turning a vocal up rarely makes it clearer, because the music is still masking the same frequencies.
+Clarion works on the vocal; Clarion Room makes space in the music. Use both.
+
+1. **Clarion** on the vocal track. In its sidechain section set **Audio From** to your instrumental / music bus
+   (a group of everything except the vocal). The header should read *SIDECHAIN: MUSIC DETECTED*.
+2. **Clarion Room** on that music bus, with its sidechain set to the **vocal** track.
+3. Play the song. Clarion learns an EQ for the voice on first play (or press **AUTO EQ**), rides the vocal so it sits
+   **Target** dB above the music, and lifts **Clarity** only in the bands where the music is covering it.
+   Room ducks those same bands in the music, only while the vocal sings, and only in the centre if **Mid only** is on.
+
+**Key**: the vocal's key and live note are shown at the top left; the reference key and root come from whatever is in the
+sidechain. To match the vocal to a particular element (a bassline, a chord stab), route that element to Clarion's
+sidechain for a few seconds, press **HOLD REF**, then **MATCH**. Choose **KEY** (fits the vocal into the element's key,
+treating relative major/minor as the same) or **ROOT** (moves the vocal's tonic onto the element's root note).
+Then set the sidechain back to the music bus. The pitch shift is formant-preserving, so the voice keeps its character.
+Clarion adds 40 ms of latency, which Live compensates automatically.
+
+**Parallel dynamics**: Drive sets how hard the parallel layer is compressed (its threshold follows the vocal's own level),
+Parallel blends it in, and Groove Glue makes that dense layer pulse with the music's drums so the vocal locks to the groove.
