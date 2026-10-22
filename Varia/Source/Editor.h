@@ -59,6 +59,9 @@ private:
     juce::OwnedArray<juce::Slider> knobs;
     juce::OwnedArray<juce::AudioProcessorValueTreeState::SliderAttachment> att;
     Pill bypassPill, wetPill, stylePill;
+    juce::ComboBox everyBox, lengthBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> everyAtt, lengthAtt;
+    int barsToNext = -1;
     juce::Rectangle<int> prevArea, nextArea;
     float inMeter = 0, outMeter = 0, flash = 0;
     int lastCounter = 0;

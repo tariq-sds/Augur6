@@ -16,6 +16,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout VariaProcessor::createLayout
     l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { vap::style, 1 }, "Style", names, 1));
     l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { vap::wetOnly, 1 }, "Wet Only", false));
     l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { vap::bypass, 1 }, "Bypass", false));
+    juce::StringArray every, lens;
+    for (int b : va::everyChoices()) every.add (b == 0 ? juce::String ("STYLE") : juce::String (b) + (b == 1 ? " BAR" : " BARS"));
+    for (int st : va::lengthChoices()) lens.add (va::lengthName (st));
+    l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { vap::every, 1 }, "Every", every, 0));
+    l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { vap::length, 1 }, "Change Length", lens, 0));
     return l;
 }
 
@@ -83,6 +88,8 @@ void VariaProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiB
     s.style = (int) pv (vap::style);
     s.wetOnly = pv (vap::wetOnly) > 0.5f;
     s.bypass = pv (vap::bypass) > 0.5f;
+    s.everyBars = va::everyChoices()[(size_t) juce::jlimit (0, (int) va::everyChoices().size() - 1, (int) pv (vap::every))];
+    s.eventSteps = va::lengthChoices()[(size_t) juce::jlimit (0, (int) va::lengthChoices().size() - 1, (int) pv (vap::length))];
     engine.process (L, R, n, s, tp);
 
     float outPk = 0;

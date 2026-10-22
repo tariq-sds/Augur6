@@ -12,6 +12,8 @@ namespace vap
     inline constexpr const char* style      = "style";
     inline constexpr const char* wetOnly    = "wetOnly";
     inline constexpr const char* bypass     = "bypass";
+    inline constexpr const char* every      = "every";
+    inline constexpr const char* length     = "length";
 }
 
 class VariaProcessor : public juce::AudioProcessor

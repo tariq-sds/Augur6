@@ -160,6 +160,17 @@ VariaEditor::VariaEditor (VariaProcessor& p) : AudioProcessorEditor (p), proc (p
     for (auto* pl : { &bypassPill, &wetPill, &stylePill }) addAndMakeVisible (pl);
     stylePill.setInterceptsMouseClicks (false, false);   // handled by the editor so < > work too
 
+    // EVERY: a change at the end of every N bars and nothing in between (like switching Varia on for one beat
+    // every N bars). LENGTH: how long each change lasts.
+    for (int b : va::everyChoices()) everyBox.addItem (b == 0 ? juce::String ("STYLE") : juce::String (b) + (b == 1 ? " BAR" : " BARS"), everyBox.getNumItems() + 1);
+    for (int st : va::lengthChoices()) lengthBox.addItem (va::lengthName (st), lengthBox.getNumItems() + 1);
+    everyAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, vap::every, everyBox);
+    lengthAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, vap::length, lengthBox);
+    everyBox.setTooltip ("STYLE: the style decides when things happen. Pick a bar count to get exactly one change at the end of every N bars (counted from bar 1), with Varia completely transparent in between.");
+    lengthBox.setTooltip ("How long each change lasts (AUTO lets the style choose)");
+    addAndMakeVisible (everyBox);
+    addAndMakeVisible (lengthBox);
+
     setResizable (true, true);
     setResizeLimits ((int) (kW * 0.75), (int) (kH * 0.75), (int) (kW * 1.6), (int) (kH * 1.6));
     if (auto* c = getConstrainer()) c->setFixedAspectRatio ((double) kW / (double) kH);
@@ -251,6 +262,7 @@ void VariaEditor::timerCallback()
     orb.update (dt, proc.engine.motion.load(), outMeter, flash, st);
 
     stylePill.text = st.name;
+    barsToNext = proc.engine.barsToNext.load();
     bypassPill.lit = proc.apvts.getRawParameterValue (vap::bypass)->load() > 0.5f;
     wetPill.lit = proc.apvts.getRawParameterValue (vap::wetOnly)->load() > 0.5f;
     for (auto* pl : { &bypassPill, &wetPill, &stylePill }) { pl->accent = look.accent; pl->repaint(); }
@@ -266,6 +278,8 @@ void VariaEditor::resized()
     stylePill.setBounds (R (138, 88, 144, 36));
     wetPill.setBounds (R (292, 90, 102, 32));
     prevArea = R (138, 88, 34, 36);
+    everyBox.setBounds (R (84, 136, 116, 30));
+    lengthBox.setBounds (R (272, 136, 122, 30));
     nextArea = R (248, 88, 34, 36);
     orb.setBounds (R (210 - 106, 300 - 106, 212, 212));
     textureSlider.setBounds (R (210 - 140, 300 - 140, 280, 280));
@@ -343,6 +357,14 @@ void VariaEditor::paint (juce::Graphics& g)
     g.setColour (vc::text);
     g.setFont (toota::font (14.0f, 2, 0.1f));
     g.drawText ("TEXTURE", juce::Rectangle<float> (110, 434, 200, 18), juce::Justification::centred);
+    g.setColour (vc::text); g.setFont (toota::font (11.5f, 2, 0.06f));
+    g.drawText ("EVERY", juce::Rectangle<float> (26, 136, 56, 28), juce::Justification::centredLeft);
+    g.drawText ("LENGTH", juce::Rectangle<float> (208, 136, 62, 28), juce::Justification::centredLeft);
+    if (barsToNext > 0 && ! (eventAlpha > 0.01f && eventText.isNotEmpty()))
+    {
+        g.setColour (vc::dim); g.setFont (toota::font (11.0f, 2, 0.06f));
+        g.drawText ("NEXT CHANGE IN " + juce::String (barsToNext) + (barsToNext == 1 ? " BAR" : " BARS"), juce::Rectangle<float> (90, 454, 240, 14), juce::Justification::centred);
+    }
     if (eventAlpha > 0.01f && eventText.isNotEmpty())
     {
         g.setColour (look.accent.darker (0.2f).withAlpha (eventAlpha));

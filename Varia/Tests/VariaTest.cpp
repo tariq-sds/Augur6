@@ -142,6 +142,42 @@ int main (int argc, char** argv)
         if (! (r.diffDb < -90 && r.events == 0)) ++failures;
     }
 
+    // EVERY N BARS: one change at the end of every N bars, transparent before it
+    {
+        const auto long40 = makeGroove (sr, 124.0, 40);
+        for (int n : { 13, 16, 4, 15 })
+            for (int style : { 1, 4, 6 })
+            {
+                VariaProcessor p;
+                TestHead head; p.testPlayHead = &head;
+                p.prepareToPlay (sr, 512);
+                auto set = [&] (const char* id, float v) { auto* prm = p.apvts.getParameter (id); prm->setValueNotifyingHost (prm->convertTo0to1 (v)); };
+                set (vap::style, (float) style);
+                set (vap::texture, 0.8f);
+                const auto& ev = va::everyChoices(); const int ei = (int) (std::find (ev.begin(), ev.end(), n) - ev.begin());
+                set (vap::every, (float) ei);
+                set (vap::length, 2.0f);   // 1 beat
+                juce::AudioBuffer<float> buf (2, 512); juce::MidiBuffer midi;
+                const double beat = sr * 60.0 / 124.0;
+                int firstDiff = -1;
+                for (int pos = 0; pos + 512 <= long40.getNumSamples(); pos += 512)
+                {
+                    for (int c = 0; c < 2; ++c) buf.copyFrom (c, 0, long40, c, pos, 512);
+                    head.ppq = pos / sr * 124.0 / 60.0;
+                    p.processBlock (buf, midi);
+                    for (int i = 0; i < 512 && firstDiff < 0; ++i)
+                        if (std::abs (buf.getSample (0, i) - long40.getSample (0, pos + i)) > 1e-4f) firstDiff = pos + i;
+                }
+                const int expected = 40 / n - (40 % n == 0 ? 0 : 0);
+                const int got = p.engine.eventCounter.load();
+                const double firstBeat = firstDiff / beat;
+                const bool ok = got == expected && firstBeat >= n * 4 - 2.05 && firstBeat < n * 4;
+                std::printf ("every %2d bars, %-11s: %d changes (want %d), first at beat %.2f (bar %d ends at beat %d) -> %s\n",
+                             n, va::styles()[(size_t) style].name, got, expected, firstBeat, n, n * 4, ok ? "ok" : "FAIL");
+                if (! ok) ++failures;
+            }
+    }
+
     if (auto* snap = std::getenv ("SNAPSHOT"))
     {
         VariaProcessor p;
@@ -149,6 +185,7 @@ int main (int argc, char** argv)
         p.prepareToPlay (sr, 512);
         if (auto* e = std::getenv ("SNAP_STYLE")) { auto* prm = p.apvts.getParameter (vap::style); prm->setValueNotifyingHost (prm->convertTo0to1 ((float) std::atoi (e))); }
         auto* prm = p.apvts.getParameter (vap::texture); prm->setValueNotifyingHost (0.68f);
+        if (auto* e = std::getenv ("SNAP_EVERY")) { auto* pe = p.apvts.getParameter (vap::every); pe->setValueNotifyingHost (pe->convertTo0to1 ((float) std::atoi (e))); }
         juce::AudioBuffer<float> buf (2, 512); juce::MidiBuffer midi;
         for (int pos = 0; pos < (int) sr * 6; pos += 512) { for (int c = 0; c < 2; ++c) buf.copyFrom (c, 0, groove, c, pos, 512); head.ppq = pos / sr * 124 / 60; p.processBlock (buf, midi); }
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());

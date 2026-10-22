@@ -46,6 +46,11 @@ Pick a **style** with `< >` or by clicking the name.
 * **Pitch**: transposes rolls, reverse swells and tape stops.
 * **Wet Only**: hear only the added events. **Bypass**: click-free bypass.
 
+* **Every**: `STYLE` lets the style decide when things happen. Pick a bar count (1 to 16, 24, 32, 48 or 64) and Varia makes
+  exactly one change at the end of every N bars, counted from bar 1 of your song, and is completely transparent in between,
+  like switching it on for a beat every N bars without any automation. The display counts down to the next change.
+* **Length**: how long each of those changes lasts (half a beat up to 2 bars, or AUTO).
+
 Styles: Groove, Club Rolls, Dub Throws, Filter Ride, Glitch, Reverse Tide, Tape Stop, Breathe, Peak Time, Minimal, Wide Drift, Chaos.
 Events are placed on the grid at 2, 4 or 8-bar phrase ends (by style) with smaller fills on ordinary bars, and are chosen at
 random each time, so loops never repeat exactly. Nothing is added over silence.

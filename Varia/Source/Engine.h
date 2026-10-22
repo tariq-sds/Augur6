@@ -56,7 +56,17 @@ struct Settings
     float texture = 0.5f, release = 0.5f, brightness = 0.6f, width = 0.5f, pitch = 0.0f;
     int style = 0;
     bool wetOnly = false, bypass = false;
+    int everyBars = 0;     // 0 = the style decides; N = one change every N bars, and nothing at all in between
+    int eventSteps = 0;    // 0 = auto, else the length of that change in 16ths
 };
+
+// choices for the EVERY and LENGTH menus
+inline const std::vector<int>& everyChoices() { static const std::vector<int> v { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 24, 32, 48, 64 }; return v; }
+inline const std::vector<int>& lengthChoices() { static const std::vector<int> v { 0, 2, 4, 8, 16, 32 }; return v; }   // 16ths
+inline juce::String lengthName (int steps)
+{
+    switch (steps) { case 0: return "AUTO"; case 2: return "1/2 BEAT"; case 4: return "1 BEAT"; case 8: return "2 BEATS"; case 16: return "1 BAR"; case 32: return "2 BARS"; default: return juce::String (steps) + "/16"; }
+}
 
 struct Transport
 {
@@ -152,8 +162,11 @@ public:
         echoTime = echoTimeTarget = sr * 0.375f;
     }
 
+    std::atomic<int> barsToNext { -1 };   // with EVERY set: bars until the next change lands
+
     void process (float* L, float* R, int n, const Settings& s, const Transport& tp)
     {
+        if (s.everyBars != cur.everyBars) lastStep = INT64_MIN;   // re-plan on the new grid
         const Style& st = styles()[(size_t) juce::jlimit (0, (int) styles().size() - 1, s.style)];
         cur = s;
         curStyle = &st;
@@ -176,7 +189,7 @@ public:
         const float grooveSm = 1.0f - std::exp (-1.0f / ((0.003f + 0.03f * rel) * sr));
         const float pitchRate = std::exp2 (s.pitch / 12.0f);
         const float fLow = 180.0f * std::exp2 (s.brightness * 5.0f);
-        const float wid = s.width * st.width * tex;
+        const float wid = s.everyBars > 0 ? 0.0f : s.width * st.width * tex;
         const float rampStep = 1.0f / (0.004f * sr);
         const float bypStep = 1.0f / (0.015f * sr);
         float motionPeak = 0.0f;
@@ -209,7 +222,7 @@ public:
             if (fast > slow * 1.9f + 0.002f && holdoff == 0)
             {
                 holdoff = (int) (0.06f * sr);
-                const float g = st.groove * tex;
+                const float g = s.everyBars > 0 ? 0.0f : st.groove * tex;
                 tGain = (0.25f - rng.uni() * 1.25f) * 2.4f * g;   // mostly softer hits, the odd accent
                 tTilt = rng.bi() * 5.0f * g;
                 tPan = rng.bi() * 0.35f * g * s.width;
@@ -290,7 +303,7 @@ public:
             // ---------------- Filter motion (slow drift + sweeps into phrase ends)
             {
                 const float walk = fWalk.tick (1.0f / (sec16 * 16.0f * 2.0f * sr), rng);
-                float m = walk * 0.55f * st.filter * tex;
+                float m = s.everyBars > 0 ? 0.0f : walk * 0.55f * st.filter * tex;
                 if (fdActive)
                 {
                     const float p = (float) fdPos / (float) juce::jmax (1, fdLen);
@@ -390,6 +403,13 @@ public:
         }
 
         motion = juce::jmax (motionPeak, std::abs (gGain) / 3.0f);
+        if (s.everyBars > 0 && lastStep != INT64_MIN)
+        {
+            const int P = phraseSteps();
+            const int64_t left = P - floorMod (lastStep, P);           // 16ths until the next phrase starts
+            barsToNext = (int) ((left + stepsPerBar - 1) / stepsPerBar);
+        }
+        else barsToNext = -1;
     }
 
 private:
@@ -428,7 +448,7 @@ private:
 
     static int64_t floorMod (int64_t a, int64_t m) { const int64_t r = a % m; return r < 0 ? r + m : r; }
 
-    int phraseSteps() const { return stepsPerBar * curStyle->phraseBars; }
+    int phraseSteps() const { return stepsPerBar * (cur.everyBars > 0 ? cur.everyBars : curStyle->phraseBars); }
 
     void schedule (int type, int64_t step, int len, int variant = 0)
     {
@@ -453,9 +473,30 @@ private:
     {
         const Style& st = *curStyle;
         const float tex = cur.texture;
-        if (tex < 0.001f || quiet()) return;
+        if (tex < 0.001f || (quiet() && cur.everyBars == 0)) return;   // a fixed schedule is planned bars ahead, so don't skip it for a quiet moment now
         const int P = phraseSteps();
         const int64_t end = ps + P;
+
+        if (cur.everyBars > 0)
+        {
+            // fixed schedule: exactly one change at the end of every N bars, chosen from the style's mix
+            const float fSum = st.roll + st.throwW + st.reverse + st.gate + st.tape;
+            if (st.filter > 0 && rng.uni() < st.filter / (st.filter + fSum))
+            {
+                const int len = juce::jmin (P, cur.eventSteps > 0 ? juce::jmax (cur.eventSteps, 8) : (P >= 4 * stepsPerBar ? 2 * stepsPerBar : stepsPerBar));
+                if (end - len >= fromStep) schedule (evFilter, end - len, len);
+                return;
+            }
+            const int t = pickType (st.roll, st.throwW, st.reverse, st.gate, st.tape);
+            int len = cur.eventSteps;
+            if (len <= 0)
+                len = t == evThrow ? 2 : (t == evRoll || t == evTape) && tex > 0.6f ? 8 : 4;
+            len = juce::jmin (len, P);
+            if (t == evGate) len = juce::jmin (len, 16);           // the gate pattern covers up to a bar
+            const int64_t start = end - len;
+            if (start >= fromStep) schedule (t, start, len, t == evRoll && len <= 4 && rng.uni() < 0.5f ? 1 : 0);
+            return;
+        }
 
         if (st.filter > 0 && rng.uni() < tex * st.filter * 0.8f)
         {
@@ -488,7 +529,7 @@ private:
     {
         const Style& st = *curStyle;
         const float tex = cur.texture;
-        if (tex < 0.001f || quiet()) return;
+        if (tex < 0.001f || quiet() || cur.everyBars > 0) return;
         if (rng.uni() >= tex * st.barFill * 0.6f) return;
         const int64_t end = bs + stepsPerBar;
         const int t = pickType (st.roll, st.throwW, st.reverse * 0.5f, st.gate, st.tape * 0.5f);
