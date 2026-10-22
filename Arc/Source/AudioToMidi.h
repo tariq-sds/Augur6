@@ -146,7 +146,8 @@ inline LoopTiming analyseTiming (const AudioLoop& a, double hostBpm, bool findDo
     const double hostScore = tempoScore (t.tempo);
     double bestBpm = t.tempo, bestScore = hostScore;
     // a file that is a whole number of bars long already tells us its tempo
-    const bool wholeBars = std::abs (dur * t.tempo / 60.0 - t.beats) < 0.02 * t.beats;
+    const bool pow2Bars = t.bars <= 32 && (t.bars & (t.bars - 1)) == 0 && std::abs (t.beats - 4.0 * t.bars) < 1e-6;
+    const bool wholeBars = pow2Bars && std::abs (dur * t.tempo / 60.0 - t.beats) < 0.02 * t.beats;
     for (double bpm = 80; bpm <= 180 && ! wholeBars; bpm += 0.5)
     {
         const double sc = tempoScore (bpm);
@@ -192,6 +193,38 @@ inline LoopTiming analyseTiming (const AudioLoop& a, double hostBpm, bool findDo
     const double barSec = 4.0 * 60.0 / t.tempo;
     first = std::fmod (first, barSec); if (first < 0) first += barSec;
     if (first > barSec - 0.02) first = 0;
+    // refine to about a millisecond with a sample-domain onset envelope: STFT frames smear onsets by several ms
+    {
+        const int blk = std::max (16, (int) (a.sr * 0.001)), nb = (int) a.mono.size() / blk;
+        if (nb > 8)
+        {
+            std::vector<float> e ((size_t) nb), on ((size_t) nb);
+            for (int b = 0; b < nb; ++b) { double sum = 0; for (int i = b * blk; i < (b + 1) * blk; ++i) sum += (double) a.mono[(size_t) i] * a.mono[(size_t) i]; e[(size_t) b] = (float) sum; }
+            float mx = 0;
+            for (int b = 0; b < nb; ++b)
+            {
+                const float prev = e[(size_t) (b > 0 ? b - 1 : nb - 1)];
+                on[(size_t) b] = juce::jmax (0.0f, std::log10 (e[(size_t) b] + 1e-9f) - std::log10 (prev + 1e-9f)) * std::sqrt (e[(size_t) b]);
+                mx = juce::jmax (mx, on[(size_t) b]);
+            }
+            const double beatSec = 60.0 / t.tempo, blkSec = (double) blk / a.sr;
+            std::vector<double> devs;
+            for (double pred = first; pred < dur; pred += beatSec)
+            {
+                const int c = (int) std::round (pred / blkSec), w = (int) std::ceil (0.025 / blkSec);
+                int bi = -1; float bv = 0;
+                for (int b = c - w; b <= c + w; ++b) { const int bb = ((b % nb) + nb) % nb; if (on[(size_t) bb] > bv) { bv = on[(size_t) bb]; bi = b; } }
+                if (bi >= 0 && bv > 0.25f * mx) devs.push_back (bi * blkSec - pred);
+            }
+            if (devs.size() >= 2)
+            {
+                std::sort (devs.begin(), devs.end());
+                first += devs[devs.size() / 2];
+                first = std::fmod (first, barSec); if (first < 0) first += barSec;
+                if (first > barSec - 0.002) first = 0;
+            }
+        }
+    }
     t.offsetSec = first;
     t.confidence = bestSc > 0 ? (float) juce::jlimit (0.0, 1.0, bestScore / (bestScore + 1e-9)) : 0.0f;
     return t;

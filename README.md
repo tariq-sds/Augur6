@@ -8,7 +8,7 @@ VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
 | **Interlock** | Kick + bass balancer: auto-learned dynamic EQ dip, sub duck, bass focus and parallel compression | `Interlock/` |
 | **Varia** | Movement and variation: per-hit changes, filter/stereo drift and phrase-end fills (rolls, throws, reverse swells, gates, tape stops) | `Varia/` |
 | **Mirror** + **Mirror Bridge** | Reference-track mix matching across stems, key check per stem with transpose; the Max for Live Bridge moves Live's real faders and transposes clips | `Mirror/` |
-| **Arc** | Turns MIDI or audio loops into a full arrangement (intro / build / drop / break / outro) with fills, variations and call-and-response; drag the lanes into Live | `Arc/` |
+| **Arc** | Turns your stems into a full arrangement (intro / build / drop / break / outro): tempo and bar-1 lock, key lock, fills, rolls and call-and-response from your own audio; drag the lanes into Live | `Arc/` |
 | **Clarion** + **Clarion Room** | Vocal clarity pair: vocal EQ, de-ess, clarity, groove-glued parallel compression, vocal ride, key detection and key/root matching; Room carves the music only where the vocal needs space | `Clarion/` |
 
 ## Installing
@@ -89,10 +89,24 @@ Mirror stems only analyse during a LISTEN pass, so they cost almost no CPU the r
 
 ## Arc: quick start
 
-Put **Arc** on an empty audio track. Drop a loop onto each lane: **Drums**, **Bass**, **Chords**, **Lead**.
-MIDI clips are read directly; audio loops are converted to MIDI (drums by hit detection, bass and lead by pitch tracking,
-chords by polyphonic analysis), using Live's tempo to find the loop length. Separate stems convert far better than a full mix.
+Arc turns your own stems into a finished arrangement, Loopworm-style, but with your sounds instead of loop packs.
 
-Pick an arrangement style, set **Variation**, and press **NEW VARIATIONS** until you like the fills and phrases.
-With **Preview** on, Arc plays the arrangement through its own simple sounds in time with Live's transport.
-Then **DRAG TO LIVE** from each lane onto a MIDI track at bar 1 (or **EXPORT ALL** to `~/Music/Arc Exports`).
+1. Put **Arc** on an empty audio track.
+2. Drop your stems onto it: a handful at once, or a whole folder. Loops or full-length stems, WAV/AIFF/FLAC/MP3, or MIDI clips.
+   Each becomes a lane. Arc reads the file name to tell the **role** (kick, bass, hats, clap, perc, tops, drums, chords, lead, vocal, FX)
+   and listens to the audio when the name doesn't say. Click the coloured role chip to change it, crop to fewer bars, transpose,
+   replace or remove the stem.
+3. Arc finds each stem's **tempo** and **bar 1** and locks it to Live's tempo. The orange line on each waveform is bar 1:
+   drag the waveform sideways to move it (in 16ths), double-click to reset. Long stems start on their busiest 8 bars.
+4. **KEY** keeps bass, chords and lead in **ROOT / SCALE** (press **DETECT** to read the key from your stems).
+   Drums are never retuned and vocals only move if you ask (Transpose in the role menu).
+5. Pick a style (Club, Techno, Melodic, Afro, Radio, DJ Tool), set **Variation**, press **GENERATE** until you like it.
+   Lanes enter and leave per section, filters sweep through intros, builds and outros, claps roll up into each drop, everything
+   takes a breath on the last beat before the drop, and drums, bass, chords and lead get fills, stutters, reverses and
+   call-and-response phrases cut from their own audio. **HOLD** keeps a lane's variations, **DICE** re-rolls one lane. **UNDO / REDO** cover everything.
+6. Listen: with Live playing, Arc follows Live's position. With Live stopped, press Arc's **PLAY**, click or drag on the timeline to move,
+   click a section name to jump, double-click it to loop it. Scroll on the timeline to zoom in on the fills (shift-scroll to move).
+7. Get it into Live: drag a lane's arrow handle (or **DRAG ALL TO LIVE**) into the arrangement at bar 1. Each lane arrives as a full-length,
+   already-arranged audio clip. **EXPORT** writes every lane plus the mix to `~/Music/Arc Exports`.
+
+Arc saves its stems with the Live set (by file path), so keep the stems where they are.

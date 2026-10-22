@@ -1,6 +1,8 @@
 #include "Processor.h"
 #include "Editor.h"
 
+using namespace arc2;
+
 ArcProcessor::ArcProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
@@ -8,205 +10,586 @@ ArcProcessor::ArcProcessor()
       apvts (*this, nullptr, "ARC", [] {
           juce::AudioProcessorValueTreeState::ParameterLayout l;
           juce::StringArray names;
-          for (auto& t : arc::templates()) names.add (t.name);
-          l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ap::style, 1 }, "Arrangement", names, 0));
-          l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { ap::variation, 1 }, "Variation", juce::NormalisableRange<float> (0, 1), 0.6f,
+          for (auto& s : styles()) names.add (s.name);
+          l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ap::style, 2 }, "Arrangement", names, 0));
+          l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { ap::variation, 2 }, "Variation", juce::NormalisableRange<float> (0, 1), 0.6f,
               juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return juce::String (juce::roundToInt (v * 100)) + "%"; })));
-          l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ap::preview, 1 }, "Preview", true));
-          l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { ap::level, 1 }, "Preview Level", juce::NormalisableRange<float> (-30, 6), -6.0f));
-          for (int i = 0; i < arc::kNumLanes; ++i)
-              l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ap::laneOn (i), 1 }, juce::String (arc::laneName (i)) + " On", true));
+          l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { ap::level, 2 }, "Level", juce::NormalisableRange<float> (-30, 6), -3.0f));
+          l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ap::keyOn, 2 }, "Key Lock", true));
+          juce::StringArray notes; for (int i = 0; i < 12; ++i) notes.add (cl::noteName (i));
+          l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ap::root, 2 }, "Root", notes, 9));
+          l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ap::minor, 2 }, "Minor", true));
+          l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ap::follow, 2 }, "Follow Live", true));
           return l; }())
 {
-    for (auto* id : { ap::style, ap::variation, ap::laneOn (0), ap::laneOn (1), ap::laneOn (2), ap::laneOn (3) })
+    for (auto* id : { ap::style, ap::variation, ap::keyOn, ap::root, ap::minor })
         apvts.addParameterListener (id, this);
-    std::atomic_store (&arr, std::make_shared<const arc::Arrangement>());
-    regenTimer.startTimerHz (5);
+    std::atomic_store (&planPtr, std::make_shared<const Plan> (buildPlan ({}, {})));
+    std::atomic_store (&engine, std::make_shared<const Engine>());
+    watch.startTimerHz (10);
 }
 
 ArcProcessor::~ArcProcessor()
 {
-    regenTimer.stopTimer();
-    pool.removeAllJobs (true, 20000);
-    for (auto* id : { ap::style, ap::variation, ap::laneOn (0), ap::laneOn (1), ap::laneOn (2), ap::laneOn (3) })
+    watch.stopTimer();
+    pool.removeAllJobs (true, 30000);
+    for (auto* id : { ap::style, ap::variation, ap::keyOn, ap::root, ap::minor })
         apvts.removeParameterListener (id, this);
 }
 
 bool ArcProcessor::isBusesLayoutSupported (const BusesLayout& l) const
 {
     return l.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
-        && (l.getMainInputChannelSet() == juce::AudioChannelSet::stereo() || l.getMainInputChannelSet() == juce::AudioChannelSet::mono());
+        && (l.getMainInputChannelSet() == juce::AudioChannelSet::stereo() || l.getMainInputChannelSet() == juce::AudioChannelSet::mono()
+            || l.getMainInputChannelSet() == juce::AudioChannelSet::disabled());
 }
 
 void ArcProcessor::prepareToPlay (double sampleRate, int)
 {
     sr = sampleRate;
-    preview.prepare (sampleRate);
+    for (auto& s : states) s.reset();
+    lastAudioBeat = -1;
 }
 
+int ArcProcessor::globalTonic() const { return (int) apvts.getRawParameterValue (ap::root)->load(); }
+bool ArcProcessor::globalMinor() const { return apvts.getRawParameterValue (ap::minor)->load() > 0.5f; }
+
+// ---------------------------------------------------------------- audio
 void ArcProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
+    buffer.clear();
     if (buffer.getNumChannels() < 2 || n == 0) return;
-    if (getTotalNumInputChannels() == 1) buffer.copyFrom (1, 0, buffer, 0, 0, n);
-    double ppq = 0, bpm = 120; bool isPlaying = false;
+    double ppq = 0, bpm = hostBpm.load(); bool livePlaying = false;
     if (auto* ph = getPlayHead())
         if (auto pos = ph->getPosition())
         {
-            isPlaying = pos->getIsPlaying();
+            livePlaying = pos->getIsPlaying();
             if (auto b = pos->getBpm()) bpm = *b;
             if (auto q = pos->getPpqPosition()) ppq = *q;
         }
+    bpm = juce::jlimit (40.0, 250.0, bpm);
     hostBpm = bpm;
-    // follow Live while it plays; otherwise run Arc's own transport (Play button / click to locate)
-    double pos = ppq;
-    bool run = isPlaying;
-    if (isPlaying) arcPos = ppq;
-    else if (arcPlaying.load())
+    auto eng = std::atomic_load (&engine);
+    if (eng == nullptr || eng->plan == nullptr) return;
+    const double song = eng->plan->totalBars * 4.0;
+    const bool follow = apvts.getRawParameterValue (ap::follow)->load() > 0.5f;
+    const float level = juce::Decibels::decibelsToGain (apvts.getRawParameterValue (ap::level)->load());
+    const double bps = bpm / 60.0 / sr;
+
+    // which lanes changed identity since the last block: start their filters/gains fresh
+    for (int l = 0; l < (int) eng->uid.size() && l < kMaxLanes; ++l)
+        if (stateUid[(size_t) l] != eng->uid[(size_t) l]) { states[(size_t) l].reset(); stateUid[(size_t) l] = eng->uid[(size_t) l]; }
+
+    auto renderAt = [&] (double beat, int off, int len)
     {
-        pos = arcPos.load();
-        const double le = loopEnd.load(), ls = loopStart.load();
-        if (le > ls && pos >= le) pos = ls + std::fmod (pos - ls, le - ls);
-        arcPos = pos + n * bpm / 60.0 / sr;
-        run = true;
-    }
-    playPpq = run ? pos : arcPos.load();
-    playing = run;
-    if (apvts.getRawParameterValue (ap::preview)->load() > 0.5f)
+        if (std::abs (beat - lastAudioBeat) > 0.02) for (auto& s : states) s.gain = 0;   // jumped: fade in, no click
+        float* L = buffer.getWritePointer (0) + off;
+        float* R = buffer.getWritePointer (1) + off;
+        for (int l = 0; l < (int) eng->audio.size() && l < kMaxLanes; ++l)
+            if (eng->audio[(size_t) l] != nullptr && l < (int) eng->plan->lanes.size())
+                renderLane (*eng->audio[(size_t) l], eng->plan->lanes[(size_t) l], states[(size_t) l], L, R, len, beat, bpm, sr, eng->gain[(size_t) l] * level);
+        lastAudioBeat = beat + len * bps;
+    };
+
+    if (follow && livePlaying)
     {
-        auto a = std::atomic_load (&arr);
-        if (a) preview.render (buffer.getWritePointer (0), buffer.getWritePointer (1), n, *a, pos, bpm, run,
-                               juce::Decibels::decibelsToGain (apvts.getRawParameterValue (ap::level)->load()));
+        liveDriving = true;
+        playing = true;
+        renderAt (ppq, 0, n);
+        playPpq = ppq;
+        arcPos = ppq;
+        return;
     }
+    liveDriving = false;
+    if (! arcPlaying.load()) { playing = false; lastAudioBeat = -1; return; }
+    playing = true;
+    double pos = arcPos.load();
+    const double ls = loopStart.load(), le = loopEnd.load();
+    const double end = le > ls + 0.01 ? le : song;
+    const double start = le > ls + 0.01 ? ls : 0.0;
+    if (pos >= end || pos < 0) pos = start;
+    int done = 0;
+    while (done < n)
+    {
+        const int len = juce::jmin (n - done, juce::jmax (1, (int) std::ceil ((end - pos) / bps)));
+        renderAt (pos, done, len);
+        pos += len * bps;
+        done += len;
+        if (pos >= end - 1e-9) pos = start;
+    }
+    arcPos = pos;
+    playPpq = pos;
+}
+
+juce::AudioBuffer<float> ArcProcessor::render (int lane, double fromBeat, double beats)
+{
+    auto eng = std::atomic_load (&engine);
+    const double bpm = prepBpm, rate = prepSr;
+    const int total = (int) std::ceil (beats * 60.0 / bpm * rate);
+    juce::AudioBuffer<float> out (2, juce::jmax (1, total));
+    out.clear();
+    if (eng == nullptr || eng->plan == nullptr) return out;
+    for (int l = 0; l < (int) eng->audio.size(); ++l)
+    {
+        if (lane >= 0 && l != lane) continue;
+        if (eng->audio[(size_t) l] == nullptr || l >= (int) eng->plan->lanes.size()) continue;
+        LaneState st;
+        float vol = 0;
+        { Lock lk (mutex); if (l < (int) lanes.size()) vol = lanes[(size_t) l].volumeDb; }
+        const float g = lane >= 0 ? juce::Decibels::decibelsToGain (vol) : eng->gain[(size_t) l];
+        st.gain = 0;
+        for (int i = 0; i < total; i += 4096)
+        {
+            const int len = juce::jmin (4096, total - i);
+            renderLane (*eng->audio[(size_t) l], eng->plan->lanes[(size_t) l], st, out.getWritePointer (0) + i, out.getWritePointer (1) + i, len,
+                        fromBeat + i * bpm / 60.0 / rate, bpm, rate, g);
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- engine
+void ArcProcessor::publishEngine()
+{
+    Lock lk (mutex);
+    auto e = std::make_shared<Engine>();
+    bool anySolo = false;
+    for (auto& s : lanes) anySolo |= s.solo;
+    for (auto& s : lanes)
+    {
+        e->audio.push_back (s.audio);
+        const bool audible = anySolo ? s.solo : ! s.mute;
+        e->gain.push_back (audible ? juce::Decibels::decibelsToGain (s.volumeDb) : 0.0f);
+        e->uid.push_back (s.uid);
+    }
+    e->plan = std::atomic_load (&planPtr);
+    std::atomic_store (&engine, std::shared_ptr<const Engine> (e));
+    ++version;
+}
+
+void ArcProcessor::rebuild()
+{
+    Lock lk (mutex);
+    std::vector<LaneInfo> info;
+    for (auto& s : lanes) info.push_back (laneInfoOf (s));
+    PlanSettings ps;
+    ps.style = (int) apvts.getRawParameterValue (ap::style)->load();
+    ps.variation = apvts.getRawParameterValue (ap::variation)->load();
+    std::atomic_store (&planPtr, std::make_shared<const Plan> (buildPlan (info, ps)));
+    publishEngine();
+}
+
+int ArcProcessor::indexOfUid (int uid) const
+{
+    Lock lk (mutex);
+    for (int i = 0; i < (int) lanes.size(); ++i) if (lanes[(size_t) i].uid == uid) return i;
+    return -1;
+}
+
+void ArcProcessor::prepare (int i)
+{
+    Stem copy;
+    int gen;
+    double bpm, rate;
+    {
+        Lock lk (mutex);
+        if (i < 0 || i >= (int) lanes.size()) return;
+        copy = lanes[(size_t) i];
+        copy.peaks.clear();
+        gen = ++prepGen[copy.uid];
+        bpm = prepBpm; rate = prepSr;
+    }
+    ++jobs;
+    pool.addJob ([this, copy, gen, bpm, rate]
+    {
+        auto la = prepareStem (copy, bpm, rate);
+        auto pk = peaksOf (*la, 720);
+        {
+            Lock lk (mutex);
+            const int idx = indexOfUid (copy.uid);
+            if (idx >= 0 && prepGen[copy.uid] == gen)
+            {
+                lanes[(size_t) idx].audio = la;
+                lanes[(size_t) idx].peaks = std::move (pk);
+                rebuild();
+            }
+        }
+        --jobs;
+        ++version;
+    });
+}
+
+void ArcProcessor::prepareAll()
+{
+    const int n = numStems();
+    for (int i = 0; i < n; ++i) prepare (i);
+}
+
+void ArcProcessor::applyKey()
+{
+    Lock lk (mutex);
+    const bool on = apvts.getRawParameterValue (ap::keyOn)->load() > 0.5f;
+    cl::KeyResult g; g.tonic = globalTonic(); g.minor = globalMinor();
+    for (int i = 0; i < (int) lanes.size(); ++i)
+    {
+        auto& s = lanes[(size_t) i];
+        const bool tonal = isTonalRole (s.role) && s.key.tonic >= 0;
+        s.suggested = tonal ? cl::keyShift (s.key, g) : 0;
+        // like Loopworm: bass / chords / lead follow the key, drums never, vocals only if you ask
+        const bool autoTune = s.role == rBass || s.role == rChords || s.role == rLead;
+        const int want = s.manualTranspose != Stem::kAuto ? s.manualTranspose : (on && autoTune ? s.suggested : 0);
+        if (want != s.transpose) { s.transpose = want; prepare (i); }
+    }
+    ++version;
+}
+
+void ArcProcessor::detectKey()
+{
+    std::array<float, 12> sum {};
+    {
+        Lock lk (mutex);
+        for (auto& s : lanes)
+        {
+            if (! isTonalRole (s.role)) continue;
+            const float w = s.role == rBass ? 1.5f : s.role == rVocal ? 0.7f : 1.0f;
+            float tot = 0; for (auto v : s.chroma) tot += v;
+            if (tot <= 0) continue;
+            for (int k = 0; k < 12; ++k) sum[(size_t) k] += w * s.chroma[(size_t) k] / tot;
+        }
+    }
+    float tot = 0; for (auto v : sum) tot += v;
+    if (tot <= 0) { setMessage ("Add a bass, chord or lead stem to find the key"); return; }
+    const auto k = cl::findKey (sum);
+    if (k.tonic < 0) return;
+    pushUndo();
+    if (auto* p = apvts.getParameter (ap::root)) p->setValueNotifyingHost (p->convertTo0to1 ((float) k.tonic));
+    if (auto* p = apvts.getParameter (ap::minor)) p->setValueNotifyingHost (k.minor ? 1.0f : 0.0f);
+    keyEverSet = true;
+    setMessage (juce::String ("Key: ") + cl::noteName (k.tonic) + (k.minor ? " minor" : " major"));
+    applyKey();
+    rebuild();
 }
 
 // ---------------------------------------------------------------- loading
-static bool isMidiFile (const juce::File& f) { return f.hasFileExtension ("mid;midi"); }
-
-void ArcProcessor::convert (int laneIn, const juce::File& f)
+bool ArcProcessor::loadMidiStem (Stem& s, const juce::File& f)
 {
-    LaneSource src;
-    src.source = f.getFileName();
-    int lane = laneIn;
-    if (isMidiFile (f))
+    auto im = arc::readMidi (f);
+    if (! im.ok && im.clip.notes.empty()) return false;
+    // play the MIDI through Arc's preview sounds to make an audio loop
+    const double bpm = 120, rate = 48000, beats = juce::jmax (4.0, im.clip.lengthBeats);
+    arc::Arrangement a;
+    a.totalBars = (int) (beats / 4) * 2;
+    auto& c = a.lanes[(size_t) im.suggestedLane];
+    for (int rep = 0; rep < 2; ++rep) for (auto n : im.clip.notes) { n.start += rep * beats; c.notes.push_back (n); }
+    c.sort();
+    arc::Preview pv; pv.prepare (rate);
+    const int loopN = (int) std::round (beats * 60.0 / bpm * rate);
+    juce::AudioBuffer<float> two (2, loopN * 2); two.clear();
+    for (int i = 0; i < loopN * 2; i += 256)
     {
-        auto m = arc::readMidi (f);
-        if (! m.ok) { src.report = "Could not read that MIDI file"; }
-        else
+        const int len = juce::jmin (256, loopN * 2 - i);
+        pv.render (two.getWritePointer (0) + i, two.getWritePointer (1) + i, len, a, i * bpm / 60.0 / rate, bpm, true, 1.4f);
+    }
+    auto orig = std::make_shared<juce::AudioBuffer<float>> (2, loopN);
+    for (int ch = 0; ch < 2; ++ch) orig->copyFrom (ch, 0, two, ch, loopN, loopN);
+    s.original = orig;
+    s.fileSr = rate;
+    s.name = f.getFileNameWithoutExtension();
+    s.path = f.getFullPathName();
+    s.fromMidi = true;
+    static const int laneRole[] { rDrums, rBass, rChords, rLead };
+    int role = roleFromName (s.name);
+    s.role = role >= 0 ? role : laneRole[juce::jlimit (0, 3, im.suggestedLane)];
+    s.timing.tempo = bpm; s.timing.beats = beats; s.timing.bars = (int) (beats / 4); s.timing.offsetSec = 0;
+    s.chroma = chromaOf (*orig, rate);
+    s.key = cl::findKey (s.chroma);
+    s.report = juce::String (s.timing.bars) + " bar MIDI loop";
+    return true;
+}
+
+// Stems bounced from one session share their start. A stem whose bar 1 can't be told from its own audio
+// (a four-to-the-floor kick, hats, a bassline) takes it from a same-length drum loop or clap that can.
+static int timingAuthority (int role) { return role == rDrums ? 3 : role == rClap ? 2 : (role == rTops || role == rPerc) ? 1 : 0; }
+
+void ArcProcessor::adoptTiming (Stem& s)
+{
+    Lock lk (mutex);
+    if (s.fromMidi || s.original == nullptr) return;
+    const double dur = s.original->getNumSamples() / s.fileSr;
+    auto sameLength = [dur] (const Stem& o) { return o.original != nullptr && ! o.fromMidi && std::abs (o.original->getNumSamples() / o.fileSr - dur) < 0.005; };
+    const Stem* ref = nullptr;
+    for (auto& o : lanes)
+        if (sameLength (o) && timingAuthority (o.role) > timingAuthority (s.role) && (ref == nullptr || timingAuthority (o.role) > timingAuthority (ref->role)))
+            ref = &o;
+    if (ref != nullptr)
+    {
+        s.timing.offsetSec = ref->timing.offsetSec;
+        s.timing.tempo = ref->timing.tempo; s.timing.bars = ref->timing.bars; s.timing.beats = ref->timing.beats;
+        s.report = juce::String (s.timing.bars) + (s.timing.bars == 1 ? " bar @ " : " bars @ ") + juce::String (s.timing.tempo, 1) + " BPM, bar 1 from " + ref->name;
+        return;
+    }
+    // the other way round: a better reference just arrived, so line up the same-length stems already loaded
+    for (int i = 0; i < (int) lanes.size(); ++i)
+    {
+        auto& o = lanes[(size_t) i];
+        if (sameLength (o) && timingAuthority (s.role) > timingAuthority (o.role) && std::abs (o.timing.offsetSec - s.timing.offsetSec) > 0.001)
         {
-            if (lane < 0) lane = m.suggestedLane;
-            src.loop = m.clip;
-            src.report = juce::String ((int) m.clip.notes.size()) + " notes, " + juce::String (m.clip.lengthBeats / 4.0, 0) + " bars (MIDI)";
+            o.timing.offsetSec = s.timing.offsetSec;
+            o.timing.tempo = s.timing.tempo; o.timing.bars = s.timing.bars; o.timing.beats = s.timing.beats;
+            o.report = juce::String (o.timing.bars) + (o.timing.bars == 1 ? " bar @ " : " bars @ ") + juce::String (o.timing.tempo, 1) + " BPM, bar 1 from " + s.name;
+            prepare (i);
         }
     }
-    else
+}
+
+void ArcProcessor::insertStem (Stem s)
+{
+    Lock lk (mutex);
+    adoptTiming (s);
+    s.uid = nextUid++;
+    s.seed = (uint32_t) (++seedCounter * 2654435761u);
+    // keep lanes in Loopworm order: kick, bass, hats, clap... (by role), new ones after existing of the same role
+    auto it = std::find_if (lanes.begin(), lanes.end(), [&s] (const Stem& o) { return o.role > s.role; });
+    const int idx = (int) (it - lanes.begin());
+    lanes.insert (it, std::move (s));
+    if (! keyEverSet && isTonalRole (lanes[(size_t) idx].role)) needKeyDetect = true;
+    applyKey();
+    prepare (idx);
+    rebuild();
+}
+
+bool ArcProcessor::addFileSync (const juce::File& f, int role)
+{
+    Stem s;
+    const auto ext = f.getFileExtension().toLowerCase();
+    const bool ok = (ext == ".mid" || ext == ".midi") ? loadMidiStem (s, f) : loadStem (s, f, hostBpm.load());
+    if (! ok) { setMessage ("Couldn't read " + f.getFileName()); return false; }
+    if (role >= 0 && role != s.role) { s.role = role; analyseStem (s, hostBpm.load(), role); }
+    if (numStems() >= kMaxLanes) { setMessage ("Arc holds 12 stems"); return false; }
+    pushUndo();
+    insertStem (std::move (s));
+    if (needKeyDetect.exchange (false)) detectKey();
+    return true;
+}
+
+void ArcProcessor::addFiles (const juce::StringArray& paths)
+{
+    for (auto& p : paths)
     {
-        auto a = arc::loadAudio (f);
-        if (! a.ok) src.report = "Could not read that audio file";
-        else
+        const juce::File f (p);
+        if (f.isDirectory())
         {
-            
-            if (lane < 0)
+            juce::StringArray inner;
+            for (auto& c : f.findChildFiles (juce::File::findFiles, false, "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg;*.mid;*.midi"))
+                inner.add (c.getFullPathName());
+            inner.sort (true);
+            addFiles (inner);
+            continue;
+        }
+        ++jobs;
+        pool.addJob ([this, f]
+        {
+            Stem s;
+            const auto ext = f.getFileExtension().toLowerCase();
+            const bool ok = (ext == ".mid" || ext == ".midi") ? loadMidiStem (s, f) : loadStem (s, f, hostBpm.load());
+            if (! ok) setMessage ("Couldn't read " + f.getFileName());
+            else if (numStems() >= kMaxLanes) setMessage ("Arc holds 12 stems");
+            else
             {
-                // guess: noisy/percussive -> drums; pitched and low -> bass; pitched -> lead; else chords
-                cl::PitchTracker tr; tr.prepare ((float) a.sr);
-                int frames = 0, voiced = 0; double sumMidi = 0; float clean = 0;
-                for (auto s : a.mono) if (tr.push (s) && tr.rms > 0.01f) { ++frames; if (tr.voiced) { ++voiced; clean += 1.0f - tr.aperiodicity; sumMidi += 69 + 12 * std::log2 (tr.hz / 440.0f); } }
-                const float vf = frames ? (float) voiced / frames : 0;        // share of sounding time that has a clear pitch
-                const float periodic = voiced ? clean / voiced : 0;            // single notes are very periodic, chords much less
-                if (std::getenv ("ARC_DEBUG")) std::printf ("    [guess %s] voiced %.2f periodic %.2f mean %.1f\n", f.getFileName().toRawUTF8(), vf, periodic, voiced ? sumMidi / voiced : 0.0);
-                if (vf < 0.35f || (vf < 0.6f && voiced && sumMidi / voiced < 40)) lane = arc::laneDrums;
-                else if (voiced && sumMidi / voiced < 52) lane = arc::laneBass;
-                else if (vf > 0.6f && periodic > 0.8f) lane = arc::laneLead;
-                else lane = arc::laneChords;
+                Lock lk (mutex);
+                undoStack.push_back ({ lanes, globalTonic(), globalMinor() ? 1 : 0, (int) apvts.getRawParameterValue (ap::keyOn)->load() });
+                redoStack.clear();
+                insertStem (std::move (s));
+                setMessage ("Added " + f.getFileName());
             }
-            // only drum loops get a downbeat search: tonal stems (offbeat basslines!) are trusted to start on the 1
-            const auto tm = arc::analyseTiming (a, hostBpm.load(), lane == arc::laneDrums);
-            juce::String rep;
-            if (lane == arc::laneDrums) src.loop = arc::drumsToMidi (a, tm, &rep);
-            else if (lane == arc::laneChords) src.loop = arc::polyToMidi (a, tm, &rep);
-            else src.loop = arc::monoToMidi (a, tm, &rep);
-            src.fromAudio = true;
-            src.tempo = tm.tempo;
-            src.report = rep + ", " + juce::String (tm.bars) + " bars @ " + juce::String (tm.tempo, 1) + " BPM"
-                       + (tm.offsetSec > 0.005 ? ", bar 1 found " + juce::String (juce::roundToInt (tm.offsetSec * 1000)) + " ms in" : juce::String());
+            --jobs;
+            ++version;
+        });
+    }
+}
+
+void ArcProcessor::removeStem (int i)
+{
+    pushUndo();
+    Lock lk (mutex);
+    if (i < 0 || i >= (int) lanes.size()) return;
+    lanes.erase (lanes.begin() + i);
+    rebuild();
+}
+
+void ArcProcessor::replaceStem (int i, const juce::File& f)
+{
+    Stem s;
+    const auto ext = f.getFileExtension().toLowerCase();
+    const bool ok = (ext == ".mid" || ext == ".midi") ? loadMidiStem (s, f) : loadStem (s, f, hostBpm.load());
+    if (! ok) { setMessage ("Couldn't read " + f.getFileName()); return; }
+    pushUndo();
+    Lock lk (mutex);
+    if (i < 0 || i >= (int) lanes.size()) return;
+    s.role = lanes[(size_t) i].role;
+    s.volumeDb = lanes[(size_t) i].volumeDb;
+    s.uid = nextUid++;
+    s.seed = lanes[(size_t) i].seed;
+    lanes[(size_t) i] = std::move (s);
+    applyKey();
+    prepare (i);
+    rebuild();
+}
+
+// ---------------------------------------------------------------- edits
+void ArcProcessor::pushUndo()
+{
+    Lock lk (mutex);
+    undoStack.push_back ({ lanes, globalTonic(), globalMinor() ? 1 : 0, apvts.getRawParameterValue (ap::keyOn)->load() > 0.5f ? 1 : 0 });
+    if (undoStack.size() > 64) undoStack.erase (undoStack.begin());
+    redoStack.clear();
+}
+
+static bool needsPrep (const Stem& a, const Stem& b)
+{
+    return a.uid != b.uid || a.cropStart != b.cropStart || a.cropBars != b.cropBars || a.nudge != b.nudge || a.transpose != b.transpose || a.audio == nullptr;
+}
+
+void ArcProcessor::undo()
+{
+    Lock lk (mutex);
+    if (undoStack.empty()) return;
+    redoStack.push_back ({ lanes, globalTonic(), globalMinor() ? 1 : 0, apvts.getRawParameterValue (ap::keyOn)->load() > 0.5f ? 1 : 0 });
+    auto snap = undoStack.back(); undoStack.pop_back();
+    auto old = lanes;
+    lanes = snap.lanes;
+    if (auto* p = apvts.getParameter (ap::root)) p->setValueNotifyingHost (p->convertTo0to1 ((float) snap.root));
+    if (auto* p = apvts.getParameter (ap::minor)) p->setValueNotifyingHost ((float) snap.minor);
+    if (auto* p = apvts.getParameter (ap::keyOn)) p->setValueNotifyingHost ((float) snap.keyOn);
+    dirty = false;
+    for (int i = 0; i < (int) lanes.size(); ++i)
+    {
+        auto it = std::find_if (old.begin(), old.end(), [&] (const Stem& o) { return o.uid == lanes[(size_t) i].uid; });
+        if (lanes[(size_t) i].audio == nullptr || (it != old.end() && needsPrep (*it, lanes[(size_t) i]))
+            || (lanes[(size_t) i].audio != nullptr && (std::abs (lanes[(size_t) i].audio->bpm - prepBpm) > 1e-3 || lanes[(size_t) i].audio->sr != prepSr)))
+            prepare (i);
+    }
+    applyKey();
+    rebuild();
+}
+
+void ArcProcessor::redo()
+{
+    Lock lk (mutex);
+    if (redoStack.empty()) return;
+    undoStack.push_back ({ lanes, globalTonic(), globalMinor() ? 1 : 0, apvts.getRawParameterValue (ap::keyOn)->load() > 0.5f ? 1 : 0 });
+    auto snap = redoStack.back(); redoStack.pop_back();
+    lanes = snap.lanes;
+    if (auto* p = apvts.getParameter (ap::root)) p->setValueNotifyingHost (p->convertTo0to1 ((float) snap.root));
+    if (auto* p = apvts.getParameter (ap::minor)) p->setValueNotifyingHost ((float) snap.minor);
+    if (auto* p = apvts.getParameter (ap::keyOn)) p->setValueNotifyingHost ((float) snap.keyOn);
+    dirty = false;
+    for (int i = 0; i < (int) lanes.size(); ++i)
+        if (lanes[(size_t) i].audio == nullptr || std::abs (lanes[(size_t) i].audio->bpm - prepBpm) > 1e-3 || lanes[(size_t) i].audio->sr != prepSr
+            || lanes[(size_t) i].audio->bars != (lanes[(size_t) i].cropBars > 0 ? juce::jmin (lanes[(size_t) i].cropBars, sourceBars (lanes[(size_t) i])) : juce::jmin (sourceBars (lanes[(size_t) i]), 8)))
+            prepare (i);
+    applyKey();
+    rebuild();
+}
+
+#define ARC_EDIT(body) { pushUndo(); Lock lk (mutex); if (i < 0 || i >= (int) lanes.size()) return; auto& s = lanes[(size_t) i]; body }
+
+void ArcProcessor::setRole (int i, int role) ARC_EDIT (s.role = juce::jlimit (0, kRoles - 1, role); applyKey(); rebuild();)
+void ArcProcessor::setNudge (int i, int st) ARC_EDIT (s.nudge = ((st % 64) + 64) % 64; prepare (i);)
+void ArcProcessor::setCrop (int i, int startBar, int bars) ARC_EDIT (s.cropStart = juce::jlimit (0, sourceBars (s) - 1, startBar); s.cropBars = juce::jlimit (0, 16, bars); prepare (i);)
+void ArcProcessor::setManualTranspose (int i, int semis) ARC_EDIT (s.manualTranspose = semis; applyKey(); rebuild();)
+void ArcProcessor::setMute (int i, bool v) ARC_EDIT (s.mute = v; publishEngine();)
+void ArcProcessor::setSolo (int i, bool v) ARC_EDIT (s.solo = v; publishEngine();)
+void ArcProcessor::setHold (int i, bool v) ARC_EDIT (s.hold = v; ++version;)
+void ArcProcessor::dice (int i) ARC_EDIT (s.seed = (uint32_t) (++seedCounter * 2654435761u) ^ (uint32_t) juce::Time::getMillisecondCounter(); rebuild();)
+
+void ArcProcessor::setVolume (int i, float dB, bool undoable)
+{
+    if (undoable) pushUndo();
+    Lock lk (mutex);
+    if (i < 0 || i >= (int) lanes.size()) return;
+    lanes[(size_t) i].volumeDb = juce::jlimit (-60.0f, 6.0f, dB);
+    publishEngine();
+}
+
+void ArcProcessor::generate()
+{
+    pushUndo();
+    Lock lk (mutex);
+    const auto t = (uint32_t) juce::Time::getMillisecondCounter();
+    for (auto& s : lanes)
+        if (! s.hold) s.seed = (uint32_t) (++seedCounter * 2654435761u) ^ t;
+    rebuild();
+}
+
+void ArcProcessor::Watch::timerCallback()
+{
+    if (p.needKeyDetect.exchange (false)) p.detectKey();
+    if (p.dirty.exchange (false)) { p.applyKey(); p.rebuild(); }
+    // follow Live's tempo / sample rate: re-stretch once it has settled
+    const double bpm = p.hostBpm.load();
+    if (std::abs (bpm - p.prepBpm) > 0.005 || std::abs (p.sr - p.prepSr) > 0.5)
+    {
+        if (++tempoQuiet >= 4)
+        {
+            tempoQuiet = 0;
+            { Lock lk (p.mutex); p.prepBpm = bpm; p.prepSr = p.sr; }
+            p.prepareAll();
         }
     }
-    {
-        std::lock_guard<std::mutex> lk (mutex);
-        if (lane >= 0) lanes[(size_t) lane] = src;
-    }
-    busyLane = -1;
-    triggerRegenerate = true;
-}
-
-void ArcProcessor::loadFile (int lane, const juce::File& f)
-{
-    busyLane = lane < 0 ? 99 : lane;
-    pool.addJob ([this, lane, f] { convert (lane, f); });
-}
-
-void ArcProcessor::loadFileSync (int lane, const juce::File& f) { busyLane = lane; convert (lane, f); regenerate (false); }
-
-void ArcProcessor::clearLane (int lane)
-{
-    { std::lock_guard<std::mutex> lk (mutex); lanes[(size_t) lane] = LaneSource(); }
-    regenerate (false);
-}
-
-void ArcProcessor::nudgeLane (int lane, int steps)
-{
-    {
-        std::lock_guard<std::mutex> lk (mutex);
-        auto& L = lanes[(size_t) lane];
-        if (L.loop.empty() || steps == 0) return;
-        const double len = L.loop.lengthBeats, d = steps * 0.25;
-        for (auto& nt : L.loop.notes) { nt.start = std::fmod (nt.start - d, len); if (nt.start < 0) nt.start += len; }
-        L.loop.sort();
-        L.nudge += steps;
-    }
-    regenerate (false);
-}
-
-void ArcProcessor::regenerate (bool newSeed)
-{
-    if (newSeed) seed = (uint32_t) juce::Random::getSystemRandom().nextInt (1 << 30);
-    std::array<arc::Clip, arc::kNumLanes> loops;
-    { std::lock_guard<std::mutex> lk (mutex); for (int l = 0; l < arc::kNumLanes; ++l) loops[(size_t) l] = lanes[(size_t) l].loop; }
-    arc::Settings s;
-    s.templateIndex = (int) apvts.getRawParameterValue (ap::style)->load();
-    s.variation = apvts.getRawParameterValue (ap::variation)->load();
-    s.seed = seed;
-    for (int l = 0; l < arc::kNumLanes; ++l) s.enabled[(size_t) l] = apvts.getRawParameterValue (ap::laneOn (l))->load() > 0.5f;
-    arc::Arranger g;
-    auto a = std::make_shared<const arc::Arrangement> (g.build (loops, s));
-    std::atomic_store (&arr, a);
-    ++version;
+    else tempoQuiet = 0;
 }
 
 // ---------------------------------------------------------------- export
 juce::File ArcProcessor::exportFolder() const
 {
-    auto d = juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Arc Exports");
-    d.createDirectory();
-    return d;
+    return juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Arc Exports");
 }
 
-juce::File ArcProcessor::exportLane (int l)
+static bool writeWav (const juce::File& f, const juce::AudioBuffer<float>& b, double rate)
 {
-    auto a = arrangement();
-    if (! a || a->lanes[(size_t) l].empty()) return {};
-    const juce::String style = arc::templates()[(size_t) juce::jlimit (0, (int) arc::templates().size() - 1, (int) apvts.getRawParameterValue (ap::style)->load())].name;
-    auto f = exportFolder().getChildFile ("Arc " + juce::String (arc::laneName (l)) + " - " + style.upToFirstOccurrenceOf (" (", false, false).replaceCharacter ('/', '-') + ".mid");
-    arc::writeMidi (f, a->lanes[(size_t) l], hostBpm.load(), l == arc::laneDrums, juce::String ("Arc ") + arc::laneName (l));
-    return f;
+    f.deleteFile();
+    std::unique_ptr<juce::FileOutputStream> os (f.createOutputStream());
+    if (os == nullptr) return false;
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), rate, 2, 24, {}, 0));
+    if (w == nullptr) return false;
+    os.release();
+    return w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
 }
 
-juce::Array<juce::File> ArcProcessor::exportAll()
+juce::File ArcProcessor::exportLane (int i, const juce::File& folder)
 {
+    juce::String name;
+    {
+        Lock lk (mutex);
+        if (i < 0 || i >= (int) lanes.size()) return {};
+        name = juce::String (i + 1).paddedLeft ('0', 2) + " " + roleName (lanes[(size_t) i].role) + " - " + juce::File::createLegalFileName (lanes[(size_t) i].name);
+    }
+    folder.createDirectory();
+    const auto f = folder.getChildFile (name + ".wav");
+    auto b = render (i, 0, songBeats());
+    return writeWav (f, b, prepSr) ? f : juce::File();
+}
+
+juce::File ArcProcessor::exportMix (const juce::File& folder)
+{
+    folder.createDirectory();
+    const auto f = folder.getChildFile ("00 Arc Mix.wav");
+    auto b = render (-1, 0, songBeats());
+    return writeWav (f, b, prepSr) ? f : juce::File();
+}
+
+juce::Array<juce::File> ArcProcessor::exportAll (bool reveal)
+{
+    const auto folder = exportFolder().getChildFile ("Arc " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S") + " " + juce::String (prepBpm, 0) + " BPM");
     juce::Array<juce::File> out;
-    for (int l = 0; l < arc::kNumLanes; ++l) { auto f = exportLane (l); if (f.existsAsFile()) out.add (f); }
+    for (int i = 0; i < numStems(); ++i) if (auto f = exportLane (i, folder); f.existsAsFile()) out.add (f);
+    if (auto f = exportMix (folder); f.existsAsFile()) out.add (f);
+    if (reveal && ! out.isEmpty()) out.getFirst().revealToUser();
+    setMessage ("Exported " + juce::String (out.size()) + " files to " + folder.getFileName());
     return out;
 }
 
@@ -214,73 +597,92 @@ juce::Array<juce::File> ArcProcessor::exportAll()
 void ArcProcessor::getStateInformation (juce::MemoryBlock& dest)
 {
     auto st = apvts.copyState();
-    st.setProperty ("seed", (int) seed, nullptr);
-    juce::ValueTree ls ("LANES");
+    st.removeChild (st.getChildWithName ("STEMS"), nullptr);
+    juce::ValueTree ls ("STEMS");
+    ls.setProperty ("keySet", keyEverSet.load(), nullptr);
     {
-        std::lock_guard<std::mutex> lk (mutex);
-        for (int l = 0; l < arc::kNumLanes; ++l)
+        Lock lk (mutex);
+        for (auto& s : lanes)
         {
-            juce::ValueTree t ("LANE");
-            t.setProperty ("i", l, nullptr);
-            t.setProperty ("src", lanes[(size_t) l].source, nullptr);
-            t.setProperty ("report", lanes[(size_t) l].report, nullptr);
-            t.setProperty ("len", lanes[(size_t) l].loop.lengthBeats, nullptr);
-            t.setProperty ("audio", lanes[(size_t) l].fromAudio, nullptr);
-            t.setProperty ("nudge", lanes[(size_t) l].nudge, nullptr);
-            juce::String notes;
-            for (auto& n : lanes[(size_t) l].loop.notes)
-                notes << n.pitch << "," << n.start << "," << n.length << "," << n.velocity << ";";
-            t.setProperty ("notes", notes, nullptr);
+            juce::ValueTree t ("STEM");
+            t.setProperty ("path", s.path, nullptr);
+            t.setProperty ("role", s.role, nullptr);
+            t.setProperty ("cropStart", s.cropStart, nullptr);
+            t.setProperty ("cropBars", s.cropBars, nullptr);
+            t.setProperty ("nudge", s.nudge, nullptr);
+            t.setProperty ("manual", s.manualTranspose, nullptr);
+            t.setProperty ("vol", s.volumeDb, nullptr);
+            t.setProperty ("mute", s.mute, nullptr);
+            t.setProperty ("solo", s.solo, nullptr);
+            t.setProperty ("hold", s.hold, nullptr);
+            t.setProperty ("seed", (juce::int64) s.seed, nullptr);
             ls.appendChild (t, nullptr);
         }
     }
-    st.removeChild (st.getChildWithName ("LANES"), nullptr);
     st.appendChild (ls, nullptr);
     if (auto xml = st.createXml()) copyXmlToBinary (*xml, dest);
 }
 
 void ArcProcessor::setStateInformation (const void* data, int size)
 {
-    if (auto xml = getXmlFromBinary (data, size))
-        if (xml->hasTagName (apvts.state.getType()))
+    auto xml = getXmlFromBinary (data, size);
+    if (xml == nullptr) return;
+    auto st = juce::ValueTree::fromXml (*xml);
+    if (! st.isValid()) return;
+    auto ls = st.getChildWithName ("STEMS");
+    auto params = st.createCopy();
+    params.removeChild (params.getChildWithName ("STEMS"), nullptr);
+    apvts.replaceState (params);
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            for (int i = 0; i < params.getNumChildren(); ++i)
+                if (params.getChild (i).getProperty ("id").toString() == rp->getParameterID())
+                    rp->setValueNotifyingHost (rp->convertTo0to1 ((float) params.getChild (i).getProperty ("value")));
+    keyEverSet = (bool) ls.getProperty ("keySet", false);
+    {
+        Lock lk (mutex);
+        lanes.clear();
+        undoStack.clear(); redoStack.clear();
+        rebuild();
+    }
+    if (! ls.isValid() || ls.getNumChildren() == 0) return;
+    // reload the stems in the background, in their saved order, with their saved settings
+    ++jobs;
+    pool.addJob ([this, ls]
+    {
+        juce::StringArray missing;
+        for (int k = 0; k < ls.getNumChildren(); ++k)
         {
-            auto tree = juce::ValueTree::fromXml (*xml);
-            auto ls = tree.getChildWithName ("LANES");
-            {
-                std::lock_guard<std::mutex> lk (mutex);
-                for (int i = 0; i < ls.getNumChildren(); ++i)
-                {
-                    auto t = ls.getChild (i);
-                    const int l = (int) t.getProperty ("i", -1);
-                    if (l < 0 || l >= arc::kNumLanes) continue;
-                    LaneSource s;
-                    s.source = t.getProperty ("src").toString();
-                    s.report = t.getProperty ("report").toString();
-                    s.fromAudio = (bool) t.getProperty ("audio", false);
-                    s.nudge = (int) t.getProperty ("nudge", 0);
-                    s.loop.lengthBeats = (double) t.getProperty ("len", 4.0);
-                    for (auto& tok : juce::StringArray::fromTokens (t.getProperty ("notes").toString(), ";", ""))
-                    {
-                        auto p = juce::StringArray::fromTokens (tok, ",", "");
-                        if (p.size() < 4) continue;
-                        arc::Note n; n.pitch = p[0].getIntValue(); n.start = p[1].getDoubleValue(); n.length = p[2].getDoubleValue(); n.velocity = p[3].getFloatValue();
-                        s.loop.notes.push_back (n);
-                    }
-                    lanes[(size_t) l] = s;
-                }
-            }
-            tree.removeChild (ls, nullptr);
-            seed = (uint32_t) (int) tree.getProperty ("seed", 1);
-            apvts.replaceState (tree);
-            for (auto* p : getParameters())
-                if (auto* r = dynamic_cast<juce::RangedAudioParameter*> (p))
-                {
-                    auto child = tree.getChildWithProperty ("id", r->paramID);
-                    if (child.isValid() && child.hasProperty ("value"))
-                        r->setValueNotifyingHost (r->convertTo0to1 ((float) child.getProperty ("value")));
-                }
-            regenerate (false);
+            auto t = ls.getChild (k);
+            const juce::File f (t.getProperty ("path").toString());
+            Stem s;
+            const auto ext = f.getFileExtension().toLowerCase();
+            const bool ok = f.existsAsFile() && ((ext == ".mid" || ext == ".midi") ? loadMidiStem (s, f) : loadStem (s, f, hostBpm.load()));
+            if (! ok) { missing.add (f.getFileName()); continue; }
+            const int role = (int) t.getProperty ("role", s.role);
+            if (role != s.role && ! s.fromMidi) analyseStem (s, hostBpm.load(), role);
+            s.role = role;
+            s.cropStart = t.getProperty ("cropStart", s.cropStart);
+            s.cropBars = t.getProperty ("cropBars", s.cropBars);
+            s.nudge = t.getProperty ("nudge", 0);
+            s.manualTranspose = t.getProperty ("manual", Stem::kAuto);
+            s.volumeDb = (float) (double) t.getProperty ("vol", 0.0);
+            s.mute = t.getProperty ("mute", false);
+            s.solo = t.getProperty ("solo", false);
+            s.hold = t.getProperty ("hold", false);
+            Lock lk (mutex);
+            adoptTiming (s);
+            s.uid = nextUid++;
+            s.seed = (uint32_t) (juce::int64) t.getProperty ("seed", 1);
+            lanes.push_back (std::move (s));     // saved order is kept as it was
+            applyKey();
+            prepare ((int) lanes.size() - 1);
+            rebuild();
         }
+        if (! missing.isEmpty()) setMessage ("Couldn't find: " + missing.joinIntoString (", "));
+        --jobs;
+        ++version;
+    });
 }
 
 juce::AudioProcessorEditor* ArcProcessor::createEditor() { return new ArcEditor (*this); }

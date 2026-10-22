@@ -1,20 +1,16 @@
-// Arc test: render audio loops from known notes, convert them back to MIDI and score the
-// transcription, then build an arrangement and check its structure and exports.
+// Arc 2 test: synthetic stems (with a non-project tempo and a delayed bar 1) go in, a full arrangement comes out.
+// Checks tempo lock, bar 1, roles, key lock, the plan, the renderer, exports, undo, hold/dice, state and CPU.
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Source/Processor.h"
 #include "../Source/Editor.h"
 #include <cstdio>
 
-static constexpr double SR = 44100.0, BPM = 124.0;
+using namespace arc2;
+static constexpr double SR = 44100.0, SRC_BPM = 124.0, HOST_BPM = 120.0, HOST_SR = 48000.0;
 static int failures = 0;
-static void check (bool ok, const juce::String& w) { std::printf ("%-66s %s\n", w.toRawUTF8(), ok ? "ok" : "FAIL"); if (! ok) ++failures; }
-
-struct Head : juce::AudioPlayHead
-{
-    double ppq = 0; bool play = true;
-    juce::Optional<PositionInfo> getPosition() const override { PositionInfo p; p.setIsPlaying (play); p.setBpm (BPM); p.setPpqPosition (ppq); return p; }
-};
+static void check (bool ok, const juce::String& w) { std::printf ("%-72s %s\n", w.toRawUTF8(), ok ? "ok" : "FAIL"); if (! ok) ++failures; }
+static const double kPi2 = 2 * juce::MathConstants<double>::pi;
 
 static void writeWav (const juce::File& f, const std::vector<float>& x)
 {
@@ -27,325 +23,393 @@ static void writeWav (const juce::File& f, const std::vector<float>& x)
     if (auto w = wav.createWriterFor (os, opts)) w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
 }
 
-static double spb() { return 60.0 / BPM; }
-
-// ---- renderers (deliberately different from Arc's preview sounds)
-static std::vector<float> renderDrums (const arc::Clip& c)
+static double spb() { return 60.0 / SRC_BPM; }
+static int loopLen (int bars) { return (int) std::round (bars * 4 * spb() * SR); }
+// a loop whose bar 1 starts `offsetBeats` into the file (the content wraps round)
+static void place (std::vector<float>& x, double beat, double offsetBeats, const std::function<float (double)>& v, double dur)
 {
-    std::vector<float> x ((size_t) (c.lengthBeats * spb() * SR) + 1, 0.0f);
-    juce::Random r (3);
-    for (auto& n : c.notes)
-    {
-        const int s0 = (int) (n.start * spb() * SR);
-        for (int i = 0; i < (int) (0.5 * SR) && s0 + i < (int) x.size(); ++i)
+    const int n = (int) x.size();
+    const int s0 = (int) std::round ((beat + offsetBeats) * spb() * SR);
+    for (int i = 0; i < (int) (dur * SR); ++i) { int k = (s0 + i) % n; x[(size_t) k] += v (i / SR); }
+}
+static std::vector<float> kickLoop (double off)
+{
+    std::vector<float> x ((size_t) loopLen (4), 0);
+    for (int b = 0; b < 16; ++b) place (x, b, off, [] (double t) { return (float) (0.9 * std::sin (kPi2 * (52 * t + 2.2 * (1 - std::exp (-t / 0.03)))) * std::exp (-t / 0.18)); }, 0.4);
+    return x;
+}
+static std::vector<float> hatLoop (double off)
+{
+    std::vector<float> x ((size_t) loopLen (4), 0);
+    juce::Random r (2);
+    for (int b = 0; b < 16; ++b) { float hp = 0; place (x, b + 0.5, off, [&] (double t) { const float w = r.nextFloat() * 2 - 1, h = w - hp; hp = w; return h * 0.3f * (float) std::exp (-t / 0.04); }, 0.15); }
+    return x;
+}
+static std::vector<float> clapLoop (double off)
+{
+    std::vector<float> x ((size_t) loopLen (4), 0);
+    juce::Random r (4);
+    for (int b = 1; b < 16; b += 2) place (x, b, off, [&] (double t) { return (r.nextFloat() * 2 - 1) * 0.5f * (float) std::exp (-t / 0.1) + 0.2f * (float) std::sin (kPi2 * 900 * t) * (float) std::exp (-t / 0.02); }, 0.3);
+    return x;
+}
+static std::vector<float> tonalLoop (const std::vector<std::pair<int, double>>& notes, double len, int voices, double off)   // (midi, start beat), all `len` long
+{
+    std::vector<float> x ((size_t) loopLen (4), 0);
+    for (auto& nt : notes)
+        for (int v = 0; v < voices; ++v)
         {
-            const double t = i / SR; float v = 0;
-            if (arc::isKick (n.pitch)) v = (float) (std::sin (2 * juce::MathConstants<double>::pi * (55 * t + 2.0 * (1 - std::exp (-t / 0.03)))) * std::exp (-t / 0.2));
-            else if (arc::isSnare (n.pitch)) v = (float) ((r.nextFloat() * 2 - 1) * 0.6 * std::exp (-t / 0.09) + std::sin (2 * 3.14159 * 200 * t) * 0.3 * std::exp (-t / 0.04));
-            else { static float hp = 0; const float w = r.nextFloat() * 2 - 1; const float h = w - hp; hp = w; v = h * 0.35f * (float) std::exp (-t / (n.pitch == arc::gm::openHat ? 0.2 : 0.03)); }
-            x[(size_t) (s0 + i)] += v * n.velocity;
+            const int midi = nt.first + (v == 0 ? 0 : v == 1 ? 3 : 7);   // minor triad when voices = 3
+            const double f = 440 * std::exp2 ((midi - 69) / 12.0);
+            place (x, nt.second, off, [f, len] (double t) { const double env = std::min (1.0, t / 0.005) * (t > len * spb() - 0.01 ? std::max (0.0, 1 - (t - len * spb() + 0.01) / 0.01) : 1.0);
+                                                     return (float) (0.25 * env * (std::sin (kPi2 * f * t) + 0.4 * std::sin (2 * kPi2 * f * t) + 0.2 * std::sin (3 * kPi2 * f * t))); }, len * spb());
         }
-    }
     return x;
 }
 
-static std::vector<float> renderTonal (const arc::Clip& c, bool saw)
+static void waitJobs (ArcProcessor& p) { for (int k = 0; k < 6000 && p.jobs.load() > 0; ++k) juce::Thread::sleep (5); }
+
+// where the hits are in a buffer (sample of each onset)
+static std::vector<int> onsets (const juce::AudioBuffer<float>& b, float thresh)
 {
-    std::vector<float> x ((size_t) (c.lengthBeats * spb() * SR) + 1, 0.0f);
-    for (auto& n : c.notes)
+    // (a hit within 3 ms of the end is bar 1's hit wrapping round, not a new one)
+    std::vector<int> o;
+    float env = 0; bool above = false; int last = -100000;
+    for (int i = 0; i < b.getNumSamples(); ++i)
     {
-        const int s0 = (int) (n.start * spb() * SR), len = (int) (n.length * spb() * SR);
-        const double f = 440.0 * std::exp2 ((n.pitch - 69) / 12.0);
-        double ph = 0; float lp = 0;
-        for (int i = 0; i < len + (int) (0.03 * SR) && s0 + i < (int) x.size(); ++i)
-        {
-            ph += f / SR; if (ph >= 1) ph -= 1;
-            const float raw = saw ? (float) (2 * ph - 1) : (float) std::sin (2 * juce::MathConstants<double>::pi * ph) + 0.3f * (float) std::sin (4 * juce::MathConstants<double>::pi * ph);
-            lp += (raw - lp) * 0.25f;
-            float env = juce::jmin (1.0f, i / (0.004f * (float) SR));
-            if (i > len) env *= (float) std::exp (-(i - len) / (0.008 * SR));
-            x[(size_t) (s0 + i)] += lp * env * 0.3f * n.velocity;
-        }
+        const float a = std::abs (b.getSample (0, i));
+        env = juce::jmax (a, env * 0.999f);
+        if (! above && a > thresh && i - last > 2000 && i < b.getNumSamples() - 144) { o.push_back (i); last = i; above = true; }
+        if (above && env < thresh * 0.3f) above = false;
     }
-    return x;
+    return o;
 }
 
-static arc::Note N (int p, double s, double l, float v = 0.9f) { arc::Note n; n.pitch = p; n.start = s; n.length = l; n.velocity = v; return n; }
-
-// precision / recall of a transcription (pitch equal, start within a 16th)
-static void score (const char* what, const arc::Clip& truth, const arc::Clip& got, float minF)
+static float yinHz (const juce::AudioBuffer<float>& b, int from, int n, double sr)
 {
-    int hit = 0;
-    std::vector<bool> used (got.notes.size(), false);
-    for (auto& t : truth.notes)
-        for (size_t i = 0; i < got.notes.size(); ++i)
-            if (! used[i] && got.notes[i].pitch == t.pitch && std::abs (got.notes[i].start - t.start) < 0.13) { used[i] = true; ++hit; break; }
-    const float rec = truth.notes.empty() ? 1 : (float) hit / truth.notes.size();
-    const float pre = got.notes.empty() ? 0 : (float) hit / got.notes.size();
-    const float f = rec + pre > 0 ? 2 * rec * pre / (rec + pre) : 0;
-    if (std::getenv ("ARC_DEBUG")) { std::printf ("    got:"); for (auto& n : got.notes) std::printf (" %d@%.2f/%.2f", n.pitch, n.start, n.length); std::printf ("\n"); }
-    std::printf ("  %-8s truth %3d  found %3d  matched %3d  precision %.2f  recall %.2f  F %.2f\n", what, (int) truth.notes.size(), (int) got.notes.size(), hit, pre, rec, f);
-    check (f >= minF, juce::String (what) + " audio->MIDI accuracy F >= " + juce::String (minF, 2));
+    cl::PitchTracker t; t.prepare ((float) sr);
+    double sum = 0; int cnt = 0;
+    for (int i = from; i < from + n && i < b.getNumSamples(); ++i)
+        if (t.push (b.getSample (0, i)) && t.voiced) { sum += t.hz; ++cnt; }
+    return cnt ? (float) (sum / cnt) : 0.0f;
 }
 
-int main (int argc, char** argv)
+int main()
 {
-    juce::ScopedJuceInitialiser_GUI init;
-    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("arc-test");
+    juce::ScopedJuceInitialiser_GUI gui;
+    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("arc2test");
     dir.deleteRecursively(); dir.createDirectory();
 
-    // ---- ground truth loops (A minor)
-    arc::Clip drums; drums.lengthBeats = 8;
-    for (int b = 0; b < 8; ++b)
+    // ---- names -> roles
+    check (roleFromName ("Kick_124") == rKick && roleFromName ("Sub Bass Am") == rBass && roleFromName ("closed hat loop") == rHats
+        && roleFromName ("Clap 02") == rClap && roleFromName ("Vox chop") == rVocal && roleFromName ("Pad Chords") == rChords
+        && roleFromName ("Lead Arp") == rLead && roleFromName ("Top loop") == rTops && roleFromName ("riser") == rFx && roleFromName ("xyz") == -1,
+           "roles from file names");
+
+    // ---- stretch keeps the grid: a click every beat at 124 BPM -> 120 BPM
     {
-        drums.notes.push_back (N (arc::gm::kick, b, 0.25));
-        drums.notes.push_back (N (b == 7 ? arc::gm::openHat : arc::gm::closedHat, b + 0.5, 0.25, 0.7f));
-        if (b % 2 == 1) drums.notes.push_back (N (arc::gm::snare, b, 0.25));
+        juce::AudioBuffer<float> c (2, (int) std::round (16 * 60.0 / 124 * HOST_SR)); c.clear();
+        for (int b = 0; b < 16; ++b) { const int s = (int) std::round (b * 60.0 / 124 * HOST_SR); for (int i = 0; i < 400; ++i) { const float v = (float) std::exp (-i / 60.0) * (float) std::sin (i * 0.3); c.setSample (0, s + i, v); c.setSample (1, s + i, v); } }
+        const int out = (int) std::round (16 * 60.0 / 120 * HOST_SR);
+        auto st = stretchLoop (c, out, HOST_SR);
+        auto o = onsets (st, 0.3f);
+        double worst = 0;
+        for (int k = 0; k < (int) o.size(); ++k) { const double ideal = std::round (o[(size_t) k] / (HOST_SR * 0.5)) * HOST_SR * 0.5; worst = std::max (worst, std::abs (o[(size_t) k] - ideal)); if (getenv ("ARC_DEBUG")) std::printf ("   click %d %+.2f ms\n", k, (o[(size_t) k] - ideal) / HOST_SR * 1000); }
+        check (st.getNumSamples() == out && o.size() == 16 && worst < 0.006 * HOST_SR, "stretch 124 -> 120 BPM: 16 beats, worst " + juce::String (worst / HOST_SR * 1000, 1) + " ms off grid");
     }
-    drums.notes.push_back (N (arc::gm::kick, 6.75, 0.25, 0.7f));
-    drums.sort();
 
-    arc::Clip bass; bass.lengthBeats = 8;
-    const int bn[] { 45, 45, 48, 45, 43, 43, 47, 50 };
-    for (int k = 0; k < 8; ++k) bass.notes.push_back (N (bn[k], k + 0.5, 0.375));
-
-    arc::Clip chords; chords.lengthBeats = 16;
-    const int ch[4][3] { { 57, 60, 64 }, { 53, 57, 60 }, { 55, 60, 64 }, { 55, 59, 62 } };
-    for (int k = 0; k < 4; ++k) for (int v = 0; v < 3; ++v) chords.notes.push_back (N (ch[k][v], k * 4.0, 3.5, 0.8f));
-    chords.sort();
-
-    arc::Clip lead; lead.lengthBeats = 8;
-    const int ln[] { 76, 74, 72, 71, 72, 74, 76, 79 };
-    const double ls[] { 0, 0.75, 1.5, 2.5, 4, 4.75, 5.5, 6.5 };
-    for (int k = 0; k < 8; ++k) lead.notes.push_back (N (ln[k], ls[k], 0.5));
-
-    writeWav (dir.getChildFile ("drums.wav"), renderDrums (drums));
-    writeWav (dir.getChildFile ("bass.wav"), renderTonal (bass, true));
-    writeWav (dir.getChildFile ("chords.wav"), renderTonal (chords, true));
-    writeWav (dir.getChildFile ("lead.wav"), renderTonal (lead, false));
-
-    ArcProcessor p;
-    Head head;
-    p.setPlayHead (&head);
-    p.prepareToPlay (SR, 512);
-    { juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m; head.play = false; p.processBlock (b, m); }   // pick up host tempo
-
-    // ---- audio -> MIDI: lane given
-    p.loadFileSync (arc::laneDrums, dir.getChildFile ("drums.wav"));
-    p.loadFileSync (arc::laneBass, dir.getChildFile ("bass.wav"));
-    p.loadFileSync (arc::laneChords, dir.getChildFile ("chords.wav"));
-    p.loadFileSync (arc::laneLead, dir.getChildFile ("lead.wav"));
-    for (int l = 0; l < arc::kNumLanes; ++l) std::printf ("  %s: %s\n", arc::laneName (l), p.lane (l).report.toRawUTF8());
-    score ("Drums", drums, p.lane (arc::laneDrums).loop, 0.9f);
-    score ("Bass", bass, p.lane (arc::laneBass).loop, 0.9f);
-    score ("Chords", chords, p.lane (arc::laneChords).loop, 0.8f);
-    score ("Lead", lead, p.lane (arc::laneLead).loop, 0.9f);
-    check (std::abs (p.lane (arc::laneBass).loop.lengthBeats - 8.0) < 1e-6 && std::abs (p.lane (arc::laneChords).loop.lengthBeats - 16.0) < 1e-6, "loop lengths read as 2 and 4 bars");
-
-    // ---- loops that don't start on the 1 (pre-roll / sample start offset) and loops at another tempo
+    // ---- transpose: a 220 Hz tone down 3 semitones
     {
-        auto rot = [] (std::vector<float> x, double beats) { const int k = (int) (beats * spb() * SR); std::rotate (x.begin(), x.begin() + k, x.end()); return x; };
-        writeWav (dir.getChildFile ("drums_offset.wav"), rot (renderDrums (drums), 1.25));   // file starts a beat and a 16th late
-        writeWav (dir.getChildFile ("bass_offset.wav"), rot (renderTonal (bass, true), 2.5));
-        ArcProcessor q; q.setPlayHead (&head); q.prepareToPlay (SR, 512);
-        { juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m; q.processBlock (b, m); }
-        q.loadFileSync (arc::laneDrums, dir.getChildFile ("drums_offset.wav"));
-        q.loadFileSync (arc::laneBass, dir.getChildFile ("bass_offset.wav"));
-        std::printf ("  offset drums: %s\n  offset bass: %s\n", q.lane (0).report.toRawUTF8(), q.lane (1).report.toRawUTF8());
+        juce::AudioBuffer<float> t (2, (int) (2 * HOST_SR));
+        for (int i = 0; i < t.getNumSamples(); ++i) { const float v = 0.4f * (float) std::sin (kPi2 * 220 * i / HOST_SR); t.setSample (0, i, v); t.setSample (1, i, v); }
+        auto d = transposeLoop (t, -3);
+        auto sx = stretchLoop (t, (int) (t.getNumSamples() * 124.0 / 120.0), HOST_SR);
+        const float hzS = yinHz (sx, (int) (0.2 * HOST_SR), (int) HOST_SR, HOST_SR);
+        check (std::abs (hzS - 220) < 1.5f, "stretch keeps pitch: " + juce::String (hzS, 1) + " Hz");
+        const float hz = yinHz (d, (int) (0.2 * HOST_SR), (int) HOST_SR, HOST_SR), want = 220.0f * std::exp2 (-3 / 12.0f);
+        check (std::abs (hz - want) < 2, "transpose 220 Hz by -3: " + juce::String (hz, 1) + " Hz (want " + juce::String (want, 1) + ")");
+        juce::AudioBuffer<float> b (2, (int) (2 * HOST_SR));
+        for (int i = 0; i < b.getNumSamples(); ++i) { const float v = 0.4f * (float) std::sin (kPi2 * 110 * i / HOST_SR); b.setSample (0, i, v); b.setSample (1, i, v); }
+        auto bd = transposeLoop (b, -3, HOST_SR, true);
+        const float hzb = yinHz (bd, (int) (0.2 * HOST_SR), (int) HOST_SR, HOST_SR), wantb = 110.0f * std::exp2 (-3 / 12.0f);
+        check (bd.getNumSamples() == b.getNumSamples() && std::abs (hzb - wantb) < 1.5f, "bass-style transpose 110 Hz by -3: " + juce::String (hzb, 1) + " Hz (want " + juce::String (wantb, 1) + ")");
+    }
+
+    // ---- the stems: 124 BPM, 4 bars, bar 1 delayed by 1.25 beats in every file (the same offset, as if exported late)
+    const double off = 1.25;
+    writeWav (dir.getChildFile ("Kick 124.wav"), kickLoop (off));
+    writeWav (dir.getChildFile ("Hats.wav"), hatLoop (off));
+    writeWav (dir.getChildFile ("Clap.wav"), clapLoop (off));
+    // bass in C minor (C, Eb, G, Bb), 8ths; chords Cm / Ab / Bb / Gm-ish
+    std::vector<std::pair<int, double>> bassN, chordN;
+    const int bassSeq[] { 36, 36, 48, 36, 39, 39, 43, 46 };
+    for (int b = 0; b < 16; ++b) for (int e = 0; e < 2; ++e) bassN.push_back ({ bassSeq[(b * 2 + e) % 8], b + e * 0.5 + 0.0 });
+    for (int bar = 0; bar < 4; ++bar) { static const int roots[] { 60, 65, 67, 60 }; chordN.push_back ({ roots[bar], bar * 4.0 }); }
+    writeWav (dir.getChildFile ("Bass.wav"), tonalLoop (bassN, 0.45, 1, off));
+    writeWav (dir.getChildFile ("Chords.wav"), tonalLoop (chordN, 3.8, 3, off));
+
+    ArcProcessor proc;
+    proc.prepareToPlay (HOST_SR, 512);
+    proc.syncTempo (HOST_BPM, HOST_SR);
+    for (auto n : { "Kick 124.wav", "Hats.wav", "Clap.wav", "Bass.wav", "Chords.wav" })
+        check (proc.addFileSync (dir.getChildFile (n)), juce::String ("load ") + n);
+    waitJobs (proc);
+    auto st = proc.stems();
+    check (st.size() == 5, "five lanes");
+    check (st.size() == 5 && st[0].role == rKick && st[1].role == rBass && st[2].role == rHats && st[3].role == rClap && st[4].role == rChords, "lanes sorted kick, bass, hats, clap, chords");
+    for (auto& s : st)
+        std::printf ("    %-8s %-8s %s  key %s%s  transpose %d\n", roleName (s.role), s.name.toRawUTF8(), s.report.toRawUTF8(),
+                     s.key.tonic >= 0 ? cl::noteName (s.key.tonic) : "-", s.key.minor ? "m" : "", s.transpose);
+    check (st.size() == 5 && std::abs (st[0].timing.tempo - SRC_BPM) < 0.6 && st[0].timing.bars == 4, "kick: 124 BPM, 4 bars");
+    check (st.size() == 5 && std::abs (st[3].timing.offsetSec - off * spb()) < 0.003, "clap: bar 1 found " + juce::String (st[3].timing.offsetSec * 1000, 1) + " ms in (true " + juce::String (off * spb() * 1000, 1) + ")");
+    for (int i : { 0, 1, 2, 4 })
+        check (st.size() == 5 && std::abs (st[(size_t) i].timing.offsetSec - off * spb()) < 0.003, juce::String (roleName (st[(size_t) i].role)) + ": same bar 1 as the clap (" + juce::String (st[(size_t) i].timing.offsetSec * 1000, 1) + " ms)");
+    {
+        // a kick on its own: bar 1 can be any beat, but the beat must be exact
+        Stem k; check (loadStem (k, dir.getChildFile ("Kick 124.wav"), HOST_BPM), "kick alone loads");
+        const double inBeat = std::fmod (k.timing.offsetSec, spb()), want = std::fmod (off * spb(), spb());
+        check (std::abs (inBeat - want) < 0.003, "kick alone: beat phase " + juce::String (inBeat * 1000, 1) + " ms (true " + juce::String (want * 1000, 1) + ")");
+    }
+    check (proc.globalTonic() == 0 && proc.globalMinor(), juce::String ("key detected: ") + cl::noteName (proc.globalTonic()) + (proc.globalMinor() ? " minor" : " major"));
+
+    // prepared kick: at host tempo, first hit on sample 0, one hit per beat
+    if (st.size() == 5 && st[0].audio != nullptr)
+    {
+        const auto& la = *st[0].audio;
+        const int expectLen = (int) std::round (4 * 4 * 60.0 / HOST_BPM * HOST_SR);
+        auto o = onsets (la.loop, 0.3f);
+        double worst = 0;
+        for (auto s : o) { const double ideal = std::round (s / (HOST_SR * 0.5)) * HOST_SR * 0.5; worst = std::max (worst, std::abs (s - ideal)); }
+        check (la.loop.getNumSamples() == expectLen && la.bpm == HOST_BPM, "kick loop stretched to 120 BPM at 48 kHz");
+        check (! o.empty() && o[0] < 0.01 * HOST_SR && o.size() == 16 && worst < 0.008 * HOST_SR,
+               "kick hits on every beat from bar 1 (" + juce::String ((int) o.size()) + " hits, first at " + juce::String (o.empty() ? -1.0 : o[0] / HOST_SR * 1000, 1) + " ms, worst " + juce::String (worst / HOST_SR * 1000, 1) + " ms)");
+    }
+
+    // ---- key lock: move the song to A minor, bass and chords follow (-3), drums don't
+    {
+        const float before = st.size() == 5 && st[1].audio ? yinHz (st[1].audio->loop, 0, (int) HOST_SR, HOST_SR) : 0;
+        if (getenv ("ARC_DEBUG") && st.size() == 5)
         {
-            // a 4-on-the-floor loop is symmetric every 2 beats; the beat grid must be right, the bar start is
-            // scored over the half-bar rotations (and can be dragged by hand in the UI)
-            arc::Clip best; float bestF = -1;
-            for (double rotBeats : { 0.0, 2.0, 4.0, 6.0 })
-            {
-                arc::Clip c = q.lane (arc::laneDrums).loop;
-                for (auto& n : c.notes) n.start = arc::wrapBeat (n.start + rotBeats, c.lengthBeats);
-                int hit = 0; for (auto& t : drums.notes) for (auto& g : c.notes) if (g.pitch == t.pitch && std::abs (g.start - t.start) < 0.13) { ++hit; break; }
-                if (hit > bestF) { bestF = (float) hit; best = c; }
-            }
-            score ("Drums*", drums, best, 0.9f);
+            auto kb = cl::findKey (chromaOf (st[4].audio->loop, HOST_SR));
+            auto rs = resample (*st[4].original, HOST_SR / st[4].fileSr);
+            auto k1 = cl::findKey (chromaOf (rs, HOST_SR));
+            auto k2 = cl::findKey (chromaOf (stretchLoop (rs, (int) (rs.getNumSamples() * 124.0 / 120.0), HOST_SR), HOST_SR));
+            auto k0 = cl::findKey (chromaOf (*st[4].original, st[4].fileSr));
+            std::printf ("   orig %s%s resampled %s%s stretched %s%s  (fileSr %.0f, n %d -> %d)\n", cl::noteName (k0.tonic), k0.minor ? "m" : "", cl::noteName (k1.tonic), k1.minor ? "m" : "", cl::noteName (k2.tonic), k2.minor ? "m" : "", st[4].fileSr, st[4].original->getNumSamples(), rs.getNumSamples());
+            auto tt = transposeLoop (st[4].audio->loop, -3);
+            auto kt = cl::findKey (chromaOf (tt, HOST_SR));
+            std::printf ("   chords prepared key %s%s, transposed by hand %s%s, bass hz %.1f -> %.1f\n", cl::noteName (kb.tonic), kb.minor ? "m" : "", cl::noteName (kt.tonic), kt.minor ? "m" : "",
+                         before, yinHz (transposeLoop (st[1].audio->loop, -3), 0, (int) HOST_SR, HOST_SR));
         }
-        check (! q.lane (arc::laneDrums).loop.empty() && arc::isKick (q.lane (arc::laneDrums).loop.notes.front().pitch) && q.lane (arc::laneDrums).loop.notes.front().start < 1e-6, "offset drum loop: bar 1 found (kick on the 1)");
-        // the bass has no drums to lean on: judge it against the truth rotated to its own downbeat guess
-        // at 120 BPM (host 124): tempo must be found from the hits
-        std::vector<float> slow;
+        auto* root = proc.apvts.getParameter (ap::root);
+        root->setValueNotifyingHost (root->convertTo0to1 (9.0f));
+        proc.refreshKeyForTests();
+        waitJobs (proc);
+        auto s2 = proc.stems();
+        const float after = s2.size() == 5 && s2[1].audio ? yinHz (s2[1].audio->loop, 0, (int) HOST_SR, HOST_SR) : 0;
+        const float semis = before > 0 && after > 0 ? 12 * std::log2 (after / before) : 99;
+        const auto kAfter = s2.size() == 5 && s2[4].audio ? cl::findKey (chromaOf (s2[4].audio->loop, HOST_SR)) : cl::KeyResult();
+        check (kAfter.tonic == 9 && kAfter.minor, juce::String ("chords now play in ") + (kAfter.tonic >= 0 ? cl::noteName (kAfter.tonic) : "?") + (kAfter.minor ? "m" : ""));
+        check (s2.size() == 5 && s2[1].transpose == -3 && s2[4].transpose == -3 && s2[0].transpose == 0, "A minor: bass and chords -3, kick untouched");
+        const auto bAfter = s2.size() == 5 && s2[1].audio ? cl::findKey (chromaOf (s2[1].audio->loop, HOST_SR)) : cl::KeyResult();
+        check (bAfter.tonic == 9 && bAfter.minor, juce::String ("bass now plays in ") + (bAfter.tonic >= 0 ? cl::noteName (bAfter.tonic) : "?") + (bAfter.minor ? "m" : "") + " (pitch tracker: " + juce::String (semis, 1) + " st, octave-unsure that low)");
+        root->setValueNotifyingHost (root->convertTo0to1 (0.0f));
+        proc.refreshKeyForTests();
+        waitJobs (proc);
+    }
+
+    // ---- the plan
+    auto plan = proc.plan();
+    check (plan != nullptr && plan->totalBars == 144 && plan->lanes.size() == 5, "Club plan: 144 bars, 5 lanes");
+    if (plan != nullptr && plan->lanes.size() == 5)
+    {
+        int brk = -1, build = -1, drop = -1;
+        for (auto& s : plan->sections) { if (s.type == sBreak && brk < 0) brk = s.start; if (s.type == sBuild && build < 0) build = s.start; if (s.type == sDrop && drop < 0) drop = s.start; }
+        check (! plan->lanes[0].bars[(size_t) brk + 2].on, "kick out in the break");
+        check (plan->lanes[0].bars[0].on && ! plan->lanes[1].bars[0].on, "intro starts with kick, bass waits");
+        bool roll = false; for (int b = build; b < drop; ++b) roll |= plan->lanes[3].bars[(size_t) b].fill == fRoll;
+        check (roll, "clap roll in the build");
+        const auto& lastBuild = plan->lanes[2].bars[(size_t) drop - 1];   // hats
+        check (lastBuild.steps[13].mute && ! plan->lanes[2].bars[(size_t) drop].steps[0].mute, "a breath on the last beat before the drop");
+        int fills = 0; for (int b = drop; b < drop + 32; ++b) for (int l = 0; l < 5; ++l) fills += plan->lanes[(size_t) l].bars[(size_t) b].fill != fNone;
+        check (fills >= 4, "fills and variations in the first drop (" + juce::String (fills) + ")");
+        bool sweep = plan->lanes[1].bars[(size_t) build + 4].hp1 > 100;
+        check (sweep, "bass high-pass sweep in the build");
+    }
+
+    // ---- render
+    {
+        const double song = proc.songBeats();
+        auto mix = proc.render (-1, 0, song);
+        bool finite = true; float peak = 0;
+        for (int c = 0; c < 2; ++c) for (int i = 0; i < mix.getNumSamples(); ++i) { const float v = mix.getSample (c, i); finite &= std::isfinite (v); peak = juce::jmax (peak, std::abs (v)); }
+        check (finite && peak > 0.2f && peak < 4.0f, "mix renders, peak " + juce::String (peak, 2));
+        auto rmsBars = [&] (int b0, int b1) { const int s0 = (int) (b0 * 4 * 60.0 / HOST_BPM * HOST_SR), s1 = (int) (b1 * 4 * 60.0 / HOST_BPM * HOST_SR); return mix.getRMSLevel (0, s0, s1 - s0); };
+        int brk = 0, drop = 0;
+        for (auto& s : plan->sections) { if (s.type == sBreak && ! brk) brk = s.start; if (s.type == sDrop && ! drop) drop = s.start; }
+        const float rDrop = rmsBars (drop + 4, drop + 12), rBreak = rmsBars (brk + 2, brk + 6), rIntro = rmsBars (0, 2);
+        check (rDrop > rBreak * 1.3f && rDrop > rIntro, "drop louder than break and intro (" + juce::String (rDrop, 3) + " / " + juce::String (rBreak, 3) + " / " + juce::String (rIntro, 3) + ")");
+        // the kick lane's first hit is at sample 0 of the song
+        auto k = proc.render (0, 0, 8);
+        auto o = onsets (k, 0.3f);
+        check (! o.empty() && o[0] < 0.01 * HOST_SR, "kick lane starts on the 1 (" + juce::String (o.empty() ? -1.0 : o[0] / HOST_SR * 1000, 1) + " ms)");
+        // live playback = offline render
+        proc.setPosition (0); proc.setPlaying (true);
+        juce::AudioBuffer<float> live (2, (int) (8 * 60.0 / HOST_BPM * HOST_SR)); live.clear();
+        juce::MidiBuffer mb;
+        for (int i = 0; i < live.getNumSamples(); i += 512)
         {
-            arc::Clip d (drums);
-            const double r = 120.0 / 124.0;
-            std::vector<float> x ((size_t) (d.lengthBeats * 60.0 / 120.0 * SR) + 1, 0.0f);
-            auto fast = renderDrums (d);
-            for (size_t i = 0; i < x.size(); ++i) { const double src = i * r; const size_t i0 = (size_t) src; if (i0 + 1 < fast.size()) x[i] = fast[i0] + (float) (src - i0) * (fast[i0 + 1] - fast[i0]); }
-            slow = rot (x, 0.0);
+            const int n = juce::jmin (512, live.getNumSamples() - i);
+            juce::AudioBuffer<float> blk (2, n); blk.clear();
+            proc.processBlock (blk, mb);
+            for (int c = 0; c < 2; ++c) live.copyFrom (c, i, blk, c, 0, n);
         }
-        writeWav (dir.getChildFile ("drums_120.wav"), slow);
-        q.loadFileSync (arc::laneDrums, dir.getChildFile ("drums_120.wav"));
-        std::printf ("  120 BPM drums: %s\n", q.lane (0).report.toRawUTF8());
-        score ("Drums120", drums, q.lane (arc::laneDrums).loop, 0.85f);
+        proc.setPlaying (false);
+        auto off8 = proc.render (-1, 0, 8);
+        const float lvl = juce::Decibels::decibelsToGain (proc.apvts.getRawParameterValue (ap::level)->load());
+        double err = 0, ref = 0;
+        for (int i = 0; i < live.getNumSamples(); ++i) { err += std::pow (live.getSample (0, i) - off8.getSample (0, i) * lvl, 2); ref += std::pow (off8.getSample (0, i) * lvl, 2); }
+        check (ref > 0 && err / ref < 1e-3, "live playback matches the export");
+        // section loop: transport wraps
+        proc.setLoop (8, 16); proc.setPosition (15.9); proc.setPlaying (true);
+        juce::AudioBuffer<float> blk (2, 4800); proc.processBlock (blk, mb);
+        check (proc.arcPos.load() > 8 && proc.arcPos.load() < 9, "section loop wraps back (" + juce::String (proc.arcPos.load(), 2) + ")");
+        proc.setPlaying (false); proc.setLoop (0, 0);
     }
 
-    // ---- Arc's own transport: play from a clicked position, loop a section
+    // ---- nudge: move bar 1 of the clap by one beat
     {
-        ArcProcessor q; q.setPlayHead (&head); q.prepareToPlay (SR, 512);
-        head.play = false;
-        q.loadFileSync (arc::laneDrums, dir.getChildFile ("drums.wav"));
-        q.setPosition (64.0); q.setLoop (64.0, 72.0); q.setPlaying (true);
-        juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m; double e = 0; double maxPos = 0;
-        for (int k = 0; k < 900; ++k) { b.clear(); q.processBlock (b, m); maxPos = std::max (maxPos, q.playPpq.load()); for (int i = 0; i < 512; ++i) e += b.getSample (0, i) * b.getSample (0, i); }
-        std::printf ("  internal transport: position %.2f, max %.2f, energy %.1f\n", q.playPpq.load(), maxPos, e);
-        check (e > 1.0 && maxPos < 72.01 && q.playPpq.load() >= 64.0, "Arc plays from the clicked bar and loops the section without Live");
-        q.nudgeLane (arc::laneDrums, 2);
-        check (std::abs (q.lane (0).loop.notes.front().start) < 1e-6 && q.lane (0).nudge == 2, "dragging a lane's loop moves bar 1 by 16ths");
+        auto before = proc.stems()[3];
+        proc.setNudge (3, 4);
+        waitJobs (proc);
+        auto after = proc.stems()[3];
+        auto ob = onsets (before.audio->loop, 0.2f), oa = onsets (after.audio->loop, 0.2f);
+        const double beat = 60.0 / HOST_BPM * HOST_SR;
+        check (! ob.empty() && ! oa.empty() && std::abs ((ob[0] - oa[0]) - beat) < 0.01 * HOST_SR, "nudge +4/16 moves the clap a beat earlier");
+        proc.undo(); waitJobs (proc);
+        check (proc.stems()[3].nudge == 0, "undo puts it back");
+        proc.redo(); waitJobs (proc);
+        check (proc.stems()[3].nudge == 4, "redo");
+        proc.setNudge (3, 0); waitJobs (proc);
     }
 
-    // ---- automatic lane guess from audio
+    // ---- hold / dice / generate
     {
-        ArcProcessor q; q.setPlayHead (&head); q.prepareToPlay (SR, 512);
-        { juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m; q.processBlock (b, m); }
-        q.loadFileSync (-1, dir.getChildFile ("drums.wav"));
-        q.loadFileSync (-1, dir.getChildFile ("bass.wav"));
-        q.loadFileSync (-1, dir.getChildFile ("lead.wav"));
-        for (int l = 0; l < arc::kNumLanes; ++l) std::printf ("    guess lane %s <- %s\n", arc::laneName (l), q.lane (l).source.toRawUTF8());
-        check (! q.lane (arc::laneDrums).loop.empty() && ! q.lane (arc::laneBass).loop.empty() && ! q.lane (arc::laneLead).loop.empty(), "unlabelled audio goes to the right lanes");
-    }
-
-    // ---- MIDI import
-    {
-        arc::writeMidi (dir.getChildFile ("bass.mid"), bass, BPM, false, "bass");
-        auto m = arc::readMidi (dir.getChildFile ("bass.mid"));
-        check (m.ok && m.suggestedLane == arc::laneBass && m.clip.notes.size() == bass.notes.size(), "MIDI clip import: bass recognised, all notes kept");
-        arc::writeMidi (dir.getChildFile ("drums.mid"), drums, BPM, true, "drums");
-        check (arc::readMidi (dir.getChildFile ("drums.mid")).suggestedLane == arc::laneDrums, "MIDI drum clip recognised");
-    }
-
-    // ---- arrangement
-    p.regenerate (false);
-    auto a = p.arrangement();
-    std::printf ("  key %s %s, %d bars, sections:", cl::noteName (a->scale.tonic), a->scale.minor ? "minor" : "major", a->totalBars);
-    for (auto& s : a->sections) std::printf (" %s(%d)", arc::sectionName (s.type), s.bars);
-    std::printf ("\n");
-    check (a->totalBars == 128 && a->sections.size() == 7, "club template: 7 sections, 128 bars");
-    check ((a->scale.tonic == 9 && a->scale.minor) || (a->scale.tonic == 0 && ! a->scale.minor), "key detected: A minor / C major");
-
-    auto notesIn = [&] (int lane, int bar0, int bars, auto pred) { int c = 0; for (auto& n : a->lanes[(size_t) lane].notes) if (n.start >= bar0 * 4.0 && n.start < (bar0 + bars) * 4.0 && pred (n)) ++c; return c; };
-    auto any = [] (const arc::Note&) { return true; };
-    const auto& S = a->sections;   // 0 intro 1 build 2 drop 3 break 4 build 5 drop 6 outro
-    check (notesIn (arc::laneDrums, S[3].startBar, S[3].bars, [] (const arc::Note& n) { return arc::isKick (n.pitch); }) == 0, "break has no kick");
-    check (notesIn (arc::laneDrums, S[1].startBar + S[1].bars - 1, 1, [] (const arc::Note& n) { return n.tag == "roll"; }) >= 12
-           && notesIn (arc::laneDrums, S[1].startBar + S[1].bars - 1, 1, [] (const arc::Note& n) { return arc::isKick (n.pitch); }) == 0, "build ends with a snare roll and the kick out");
-    int fills = 0; for (int b = 7; b < S[2].bars; b += 8) fills += notesIn (arc::laneDrums, S[2].startBar + b, 1, [] (const arc::Note& n) { return n.tag == "fill"; }) > 0;
-    check (fills == S[2].bars / 8, "drop has a fill at the end of every 8 bars");
-    check (notesIn (arc::laneBass, S[0].startBar, 8, any) == 0 && notesIn (arc::laneLead, S[0].startBar, S[0].bars, any) == 0, "bass and lead held back in the intro");
-    check (notesIn (arc::laneBass, S[3].startBar + S[3].bars / 2, S[3].bars / 2, [] (const arc::Note& n) { return n.tag == "sustain"; }) > 0, "break bass becomes held roots");
-    check (notesIn (arc::laneLead, S[2].startBar, S[2].bars, [] (const arc::Note& n) { return n.tag == "response"; }) > 0, "lead has response phrases in the drop");
-    {
-        // the response differs from the call but stays in key
-        int out = 0, resp = 0;
-        for (auto& n : a->lanes[arc::laneLead].notes) if (n.tag == "response") { ++resp; if (! a->scale.contains (n.pitch)) ++out; }
-        check (resp > 0 && out == 0, "response notes are all in key");
-    }
-    check (notesIn (arc::laneChords, S[1].startBar, S[1].bars, [] (const arc::Note& n) { return n.tag == "stab"; }) > 0, "build turns chords into rising stabs");
-    check (notesIn (arc::laneDrums, S[6].startBar + S[6].bars - 4, 4, [] (const arc::Note& n) { return ! arc::isKick (n.pitch); }) == 0, "outro ends on kick only");
-    {
-        int ghost = 0, resp = 0;
-        for (auto& n : a->lanes[arc::laneDrums].notes) ghost += n.tag == "ghost";
-        for (auto& t : a->tags[arc::laneBass]) resp += t.text.contains ("answer") || t.text.contains ("passing") || t.text.contains ("walk") || t.text.contains ("syncop");
-        std::printf ("  drum ghost notes %d, bass variations %d, tags: drums %d bass %d chords %d lead %d\n", ghost, resp,
-                     (int) a->tags[0].size(), (int) a->tags[1].size(), (int) a->tags[2].size(), (int) a->tags[3].size());
-        check (resp >= 4, "bass gets call-and-response variations");
-    }
-    // determinism and re-rolls
-    {
-        const auto before = a->lanes[arc::laneBass].notes.size();
-        p.regenerate (false);
-        check (p.arrangement()->lanes[arc::laneBass].notes.size() == before, "same seed rebuilds the same arrangement");
-        p.regenerate (true);
-        auto b2 = p.arrangement();
-        bool differs = false;
-        for (int l = 0; l < arc::kNumLanes && ! differs; ++l)
+        proc.setHold (1, true);
+        auto s0 = proc.stems();
+        proc.generate();
+        auto s1 = proc.stems();
+        bool othersChanged = true; for (int i = 0; i < 5; ++i) if (i != 1) othersChanged &= s1[(size_t) i].seed != s0[(size_t) i].seed;
+        check (s1[1].seed == s0[1].seed && othersChanged, "GENERATE re-rolls every lane except the one on HOLD");
+        auto pA = proc.plan();
+        proc.dice (4);
+        auto pB = proc.plan();
+        bool lane4diff = false, lane1same = true;
+        for (int b = 0; b < pA->totalBars; ++b)
         {
-            const auto& x = a->lanes[(size_t) l].notes; const auto& y = b2->lanes[(size_t) l].notes;
-            if (x.size() != y.size()) differs = true;
-            else for (size_t i = 0; i < x.size(); ++i) if (x[i].pitch != y[i].pitch || std::abs (x[i].start - y[i].start) > 1e-9) { differs = true; break; }
+            lane4diff |= ! (pA->lanes[4].bars[(size_t) b].steps == pB->lanes[4].bars[(size_t) b].steps) || pA->lanes[4].bars[(size_t) b].on != pB->lanes[4].bars[(size_t) b].on;
+            lane1same &= pA->lanes[1].bars[(size_t) b].steps == pB->lanes[1].bars[(size_t) b].steps && pA->lanes[1].bars[(size_t) b].on == pB->lanes[1].bars[(size_t) b].on;
         }
-        check (differs, "NEW VARIATIONS changes the fills and phrases");
-        a = b2;
+        check (lane4diff && lane1same, "DICE changes only its own lane");
+        proc.setRole (4, rLead);
+        check (proc.stems()[4].role == rLead, "role change");
+        proc.undo();
+        check (proc.stems()[4].role == rChords, "undo role change");
     }
-    // every template builds
-    for (int t = 0; t < (int) arc::templates().size(); ++t)
+
+    // ---- styles
     {
-        if (auto* prm = p.apvts.getParameter (ap::style)) prm->setValueNotifyingHost (prm->convertTo0to1 ((float) t));
-        p.regenerate (false);
-        int total = 0; for (auto& l : p.arrangement()->lanes) total += (int) l.notes.size();
-        std::printf ("  template %-28s %3d bars %5d notes\n", arc::templates()[(size_t) t].name, p.arrangement()->totalBars, total);
-        check (total > 100, juce::String ("template builds: ") + arc::templates()[(size_t) t].name);
+        auto* p = proc.apvts.getParameter (ap::style);
+        bool allOk = true;
+        for (int s = 0; s < (int) styles().size(); ++s)
+        {
+            p->setValueNotifyingHost (p->convertTo0to1 ((float) s));
+            proc.refreshKeyForTests();
+            auto pl = proc.plan();
+            int tot = 0; for (auto& sd : styles()[(size_t) s].sections) tot += sd.bars;
+            allOk &= pl->totalBars == tot && pl->lanes.size() == 5;
+        }
+        check (allOk, "every arrangement style builds");
+        p->setValueNotifyingHost (p->convertTo0to1 (0.0f));
+        proc.refreshKeyForTests();
     }
-    if (auto* prm = p.apvts.getParameter (ap::style)) prm->setValueNotifyingHost (0.0f);
-    p.regenerate (false);
-    a = p.arrangement();
 
     // ---- export
-    auto files = p.exportAll();
-    check (files.size() == 4, "exports 4 MIDI files");
-    for (int i = 0; i < files.size(); ++i)
     {
-        auto m = arc::readMidi (files[i]);
-        std::printf ("  %s: %d notes\n", files[i].getFileName().toRawUTF8(), (int) m.clip.notes.size());
-        check (m.ok && std::abs ((int) m.clip.notes.size() - (int) a->lanes[(size_t) i].notes.size()) == 0, "export round-trips: " + files[i].getFileName());
+        auto files = proc.exportAll (false);
+        const int expect = (int) std::round (proc.songBeats() * 60.0 / HOST_BPM * HOST_SR);
+        bool lengths = files.size() == 6;
+        juce::AudioFormatManager fm; fm.registerBasicFormats();
+        for (auto& f : files) { std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f)); lengths &= r != nullptr && std::abs ((int) r->lengthInSamples - expect) <= 1; }
+        check (lengths, "export: 5 lanes + mix, each exactly the song length (" + juce::String (files.size()) + " files)");
+        if (! files.isEmpty()) files.getFirst().getParentDirectory().deleteRecursively();
     }
 
-    // ---- preview renders in time with the transport
+    // ---- MIDI files still work (rendered through Arc's sounds)
     {
-        juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m;
-        head.play = true;
-        double e = 0; bool bad = false;
-        for (int k = 0; k < 400; ++k)
-        {
-            head.ppq = S[2].startBar * 4.0 + k * 512 / SR * BPM / 60.0;
-            b.clear(); p.processBlock (b, m);
-            for (int i = 0; i < 512; ++i) { const float v = b.getSample (0, i); e += v * v; if (! std::isfinite (v)) bad = true; }
-        }
-        check (e > 1.0 && ! bad, "preview plays the drop in sync with the host");
+        juce::MidiMessageSequence seq;
+        for (int b = 0; b < 8; ++b) { seq.addEvent (juce::MidiMessage::noteOn (1, 45, 0.9f), b * 480.0); seq.addEvent (juce::MidiMessage::noteOff (1, 45), b * 480.0 + 400); }
+        juce::MidiFile mf; mf.setTicksPerQuarterNote (960); mf.addTrack (seq);
+        auto f = dir.getChildFile ("Midi Bass.mid");
+        { f.deleteFile(); juce::FileOutputStream os (f); mf.writeTo (os); }
+        check (proc.addFileSync (f), "MIDI bass loads as a lane");
+        waitJobs (proc);
+        auto s = proc.stems();
+        bool found = false; for (auto& x : s) found |= x.fromMidi && x.role == rBass && x.audio != nullptr;
+        check (found, "MIDI lane is a bass with audio");
     }
 
-    // ---- state round-trip
+    // ---- state
     {
-        juce::MemoryBlock mb; p.getStateInformation (mb);
-        ArcProcessor q; q.setStateInformation (mb.getData(), (int) mb.getSize());
-        check (q.lane (arc::laneChords).loop.notes.size() == p.lane (arc::laneChords).loop.notes.size()
-               && q.arrangement()->lanes[arc::laneLead].notes.size() == a->lanes[arc::laneLead].notes.size(), "state restores loops and arrangement");
+        juce::MemoryBlock mb;
+        proc.setVolume (2, -4.5f);
+        proc.setCrop (4, 0, 2);
+        waitJobs (proc);
+        proc.getStateInformation (mb);
+        ArcProcessor p2;
+        p2.prepareToPlay (HOST_SR, 512);
+        p2.syncTempo (HOST_BPM, HOST_SR);
+        p2.setStateInformation (mb.getData(), (int) mb.getSize());
+        waitJobs (p2);
+        auto a = proc.stems(), b = p2.stems();
+        bool same = a.size() == b.size();
+        for (size_t i = 0; same && i < a.size(); ++i)
+            same &= a[i].role == b[i].role && a[i].volumeDb == b[i].volumeDb && a[i].cropBars == b[i].cropBars && a[i].seed == b[i].seed && a[i].path == b[i].path && b[i].audio != nullptr;
+        check (same, "session restore: stems, settings and seeds come back");
+        auto pa = proc.plan(), pb = p2.plan();
+        bool planSame = pa->lanes.size() == pb->lanes.size();
+        for (size_t l = 0; planSame && l < pa->lanes.size(); ++l)
+            for (int bar = 0; bar < pa->totalBars; ++bar) planSame &= pa->lanes[l].bars[(size_t) bar].on == pb->lanes[l].bars[(size_t) bar].on;
+        check (planSame, "same arrangement after restore");
     }
 
-    if (auto* snap = std::getenv ("SNAPSHOT"))
+    // ---- CPU with 12 lanes
     {
-        std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
-        head.ppq = 70 * 4.0; { juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m; p.processBlock (b, m); }
-        if (auto* e = dynamic_cast<ArcEditor*> (ed.get())) e->refreshNow();
-        auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.4f);
-        juce::File f (snap); f.deleteFile(); juce::PNGImageFormat png;
-        if (auto os = f.createOutputStream()) png.writeImageToStream (img, *os);
+        for (int k = 0; proc.numStems() < 12 && k < 10; ++k) proc.addFileSync (dir.getChildFile (k % 2 ? "Hats.wav" : "Chords.wav"));
+        waitJobs (proc);
+        proc.setPosition (4 * 72); proc.setPlaying (true);
+        juce::AudioBuffer<float> blk (2, 512); juce::MidiBuffer mb;
+        const int blocks = (int) (20 * HOST_SR / 512);
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        for (int i = 0; i < blocks; ++i) proc.processBlock (blk, mb);
+        const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
+        proc.setPlaying (false);
+        check (proc.numStems() == 12 && ms < 20000 * 0.08, "12 lanes: " + juce::String (ms / 200.0, 2) + "% of one core");
     }
-    if (argc > 1)
+
+    // ---- editor snapshot
     {
-        // render the whole arrangement through the preview for a listen
-        juce::File out (argv[1]);
-        const int total = (int) (a->totalBars * 4 * 60.0 / BPM * SR);
-        std::vector<float> L ((size_t) total), R ((size_t) total);
-        juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m;
-        head.play = true;
-        for (int pos = 0; pos + 512 <= total; pos += 512)
-        {
-            head.ppq = pos / SR * BPM / 60.0;
-            b.clear(); p.processBlock (b, m);
-            for (int i = 0; i < 512; ++i) { L[(size_t) (pos + i)] = b.getSample (0, i); R[(size_t) (pos + i)] = b.getSample (1, i); }
-        }
-        juce::AudioBuffer<float> ob (2, total);
-        for (int i = 0; i < total; ++i) { ob.setSample (0, i, L[(size_t) i]); ob.setSample (1, i, R[(size_t) i]); }
+        std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
+        auto* e = dynamic_cast<ArcEditor*> (ed.get());
+        e->refreshNow();
+        proc.playPpq = 4 * 75.5;
+        auto img = e->createComponentSnapshot (e->getLocalBounds(), true, 1.0f);
+        auto out = juce::File::getCurrentWorkingDirectory().getChildFile ("arc_ui.png");
         out.deleteFile();
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::OutputStream> os (out.createOutputStream().release());
-        auto opts = juce::AudioFormatWriterOptions().withSampleRate (SR).withNumChannels (2).withBitsPerSample (16);
-        if (auto w = wav.createWriterFor (os, opts)) w->writeFromAudioSampleBuffer (ob, 0, total);
+        juce::FileOutputStream os (out); juce::PNGImageFormat png; png.writeImageToStream (img, os);
+        check (img.isValid(), "editor snapshot -> " + out.getFullPathName());
     }
-    std::printf ("failures: %d\n", failures);
+
+    dir.deleteRecursively();
+    std::printf ("\nfailures: %d\n", failures);
     return failures == 0 ? 0 : 1;
 }

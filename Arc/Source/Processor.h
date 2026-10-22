@@ -1,31 +1,36 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
-#include "AudioToMidi.h"
-#include "Arranger.h"
+#include "Renderer.h"
 #include "Preview.h"
 #include <mutex>
+#include <map>
 
 namespace ap
 {
     inline constexpr const char* style     = "style";
     inline constexpr const char* variation = "variation";
-    inline constexpr const char* preview   = "preview";
     inline constexpr const char* level     = "level";
-    inline const char* laneOn (int l) { static const char* ids[] { "onDrums", "onBass", "onChords", "onLead" }; return ids[l]; }
+    inline constexpr const char* keyOn     = "keyOn";
+    inline constexpr const char* root      = "root";
+    inline constexpr const char* minor     = "minor";
+    inline constexpr const char* follow    = "follow";
 }
 
-struct LaneSource
+// Everything the audio thread needs, swapped in one go
+struct Engine
 {
-    arc::Clip loop;
-    juce::String source, report;
-    bool fromAudio = false;
-    double tempo = 0;
-    int nudge = 0;            // 16th steps the user moved the loop start by
+    std::vector<std::shared_ptr<const arc2::LaneAudio>> audio;
+    std::vector<float> gain;     // linear, mute / solo applied
+    std::vector<int> uid;
+    std::shared_ptr<const arc2::Plan> plan;
 };
 
 class ArcProcessor : public juce::AudioProcessor, private juce::AudioProcessorValueTreeState::Listener
 {
 public:
+    static constexpr int kMaxLanes = 12;
+    using Lock = std::lock_guard<std::recursive_mutex>;
+
     ArcProcessor();
     ~ArcProcessor() override;
     void prepareToPlay (double sampleRate, int) override;
@@ -39,7 +44,7 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 2.0; }
+    double getTailLengthSeconds() const override { return 0.5; }
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram (int) override {}
@@ -48,44 +53,98 @@ public:
     void getStateInformation (juce::MemoryBlock&) override;
     void setStateInformation (const void*, int) override;
 
-    // ---- actions (message thread)
-    void loadFile (int lane, const juce::File& f);      // MIDI or audio; lane -1 = guess from content
-    void loadFileSync (int lane, const juce::File& f);  // same, blocking (tests)
-    void clearLane (int lane);
-    void nudgeLane (int lane, int steps);              // rotate the loop so a different 16th is bar 1
-    // Arc's own transport (used when Live isn't playing): click the timeline to move, Play to audition
+    // ---- stems (message thread)
+    void addFiles (const juce::StringArray& paths);              // background
+    bool addFileSync (const juce::File& f, int role = -1);       // blocking (tests)
+    void removeStem (int i);
+    void replaceStem (int i, const juce::File& f);
+    std::vector<arc2::Stem> stems() const { Lock lk (mutex); return lanes; }
+    int numStems() const { Lock lk (mutex); return (int) lanes.size(); }
+
+    // per-lane edits (all undoable)
+    void setRole (int i, int role);
+    void setNudge (int i, int sixteenths);
+    void setCrop (int i, int startBar, int bars);
+    void setManualTranspose (int i, int semis);                 // arc2::Stem::kAuto = follow KEY
+    void setVolume (int i, float dB, bool undoable = false);
+    void setMute (int i, bool);
+    void setSolo (int i, bool);
+    void setHold (int i, bool);
+    void dice (int i);                                          // new variations for one lane
+    void generate();                                            // new variations for every lane not on HOLD
+    void detectKey();                                           // sets ROOT / SCALE from the tonal stems
+    void beginVolumeGesture() { pushUndo(); }
+    void refreshKeyForTests() { dirty = false; applyKey(); rebuild(); }
+    void syncTempo (double bpm, double rate) { { Lock lk (mutex); prepBpm = bpm; prepSr = rate; } hostBpm = bpm; prepareAll(); }   // re-stretch everything now
+
+    bool canUndo() const { return ! undoStack.empty(); }
+    bool canRedo() const { return ! redoStack.empty(); }
+    void undo();
+    void redo();
+
+    // ---- transport (Arc's own when Live isn't playing)
     void setPosition (double beats) { arcPos = juce::jmax (0.0, beats); }
     void setPlaying (bool p) { arcPlaying = p; }
     void setLoop (double startBeat, double endBeat) { loopStart = startBeat; loopEnd = endBeat; }
     std::atomic<bool> arcPlaying { false };
-    std::atomic<double> arcPos { 0 }, loopStart { 0 }, loopEnd { 0 };   // loopEnd 0 = no loop
-    void regenerate (bool newSeed);
-    juce::File exportLane (int lane);                    // writes the lane's full-arrangement MIDI, returns the file
-    juce::Array<juce::File> exportAll();
-    juce::File exportFolder() const;
+    std::atomic<double> arcPos { 0 }, loopStart { 0 }, loopEnd { 0 };   // loopEnd 0 = whole song
 
-    std::shared_ptr<const arc::Arrangement> arrangement() const { return std::atomic_load (&arr); }
-    LaneSource lane (int l) const { std::lock_guard<std::mutex> lk (mutex); return lanes[(size_t) l]; }
-    std::atomic<int> busyLane { -1 };
+    // ---- export
+    juce::File exportFolder() const;
+    juce::File exportLane (int i, const juce::File& folder);    // full-length arranged WAV of one lane
+    juce::File exportMix (const juce::File& folder);
+    juce::Array<juce::File> exportAll (bool reveal);            // every lane + the mix into a new folder
+
+    // ---- read by the UI
+    std::shared_ptr<const arc2::Plan> plan() const { return std::atomic_load (&planPtr); }
+    std::atomic<int> jobs { 0 };
     std::atomic<double> hostBpm { 124 }, playPpq { 0 };
-    std::atomic<bool> playing { false };
+    std::atomic<bool> playing { false }, liveDriving { false };
     std::atomic<int> version { 0 };
+    juce::String message() const { Lock lk (mutex); return lastMessage; }
+    void setMessage (const juce::String& m) { Lock lk (mutex); lastMessage = m; ++version; }
+    int globalTonic() const;
+    bool globalMinor() const;
+    double songBeats() const { auto p = plan(); return p ? p->totalBars * 4.0 : 0.0; }
+    double preparedBpm() const { return prepBpm; }
+
+    // offline render of a range (tests / export); lane -1 = mix
+    juce::AudioBuffer<float> render (int lane, double fromBeat, double beats);
 
     juce::AudioProcessorValueTreeState apvts;
 
 private:
-    void parameterChanged (const juce::String&, float) override { triggerRegenerate = true; }
-    void convert (int lane, const juce::File& f);
+    void parameterChanged (const juce::String&, float) override { dirty = true; }
+    void pushUndo();
+    void rebuild();                         // plan + engine from current stems (fast)
+    void prepare (int i);                   // re-render stem i's loop in the background
+    void prepareAll();
+    void applyKey();                        // works out transpose for each stem; re-prepares those that changed
+    void publishEngine();
+    void insertStem (arc2::Stem s);
+    void adoptTiming (arc2::Stem& s);
+    int indexOfUid (int uid) const;
 
-    mutable std::mutex mutex;
-    std::array<LaneSource, arc::kNumLanes> lanes;
-    std::shared_ptr<const arc::Arrangement> arr;
-    uint32_t seed = 1;
-    arc::Preview preview;
-    juce::ThreadPool pool { 1 };
-    std::atomic<bool> triggerRegenerate { false };
-    struct Regen : juce::Timer { ArcProcessor& p; Regen (ArcProcessor& o) : p (o) {} void timerCallback() override { if (p.triggerRegenerate.exchange (false)) p.regenerate (false); } } regenTimer { *this };
+    mutable std::recursive_mutex mutex;
+    juce::String lastMessage;
+    std::vector<arc2::Stem> lanes;
+    struct Snapshot { std::vector<arc2::Stem> lanes; int root, minor, keyOn; };
+    std::vector<Snapshot> undoStack, redoStack;
+    std::shared_ptr<const arc2::Plan> planPtr;
+    std::shared_ptr<const Engine> engine;
+    std::array<arc2::LaneState, kMaxLanes> states;
+    std::array<int, kMaxLanes> stateUid {};
+    int nextUid = 1;
+    uint32_t seedCounter = 1;
+    std::map<int, int> prepGen;            // uid -> latest preparation number
+    double prepBpm = 124, prepSr = 48000;
+    std::atomic<bool> keyEverSet { false }, needKeyDetect { false };
+    bool loadMidiStem (arc2::Stem&, const juce::File&);
+    juce::ThreadPool pool { 2 };
+    std::atomic<bool> dirty { false };
+    struct Watch : juce::Timer { ArcProcessor& p; Watch (ArcProcessor& o) : p (o) {} void timerCallback() override; int tempoQuiet = 0; } watch { *this };
     double sr = 48000;
+    double lastAudioBeat = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArcProcessor)
 };
