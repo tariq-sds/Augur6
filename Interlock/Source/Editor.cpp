@@ -248,9 +248,9 @@ InterlockEditor::InterlockEditor (InterlockProcessor& p) : AudioProcessorEditor 
     knob (ilp::dipFreq, "FREQ", ic::kick);
     knob (ilp::dipDepth, "DEPTH", ic::kick);
     knob (ilp::dipQ, "WIDTH", ic::kick);
-    groups.push_back ({ "BREATHE", 3, 2, ic::kick.interpolatedWith (ic::bass, 0.5f) });
-    knob (ilp::duck, "SUB DUCK", ic::kick.interpolatedWith (ic::bass, 0.5f));
-    knob (ilp::release, "RELEASE", ic::kick.interpolatedWith (ic::bass, 0.5f));
+    groups.push_back ({ "BREATHE", 3, 2, toota::orange });
+    knob (ilp::duck, "SUB DUCK", toota::orange);
+    knob (ilp::release, "RELEASE", toota::orange);
     groups.push_back ({ "BASS FOCUS", 5, 2, ic::bass });
     knob (ilp::boostFreq, "FREQ", ic::bass);
     knob (ilp::boostGain, "GAIN", ic::bass);
