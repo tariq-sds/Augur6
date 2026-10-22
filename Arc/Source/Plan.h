@@ -73,7 +73,7 @@ struct Plan
 // what Plan needs to know about each lane
 struct LaneInfo
 {
-    int role = rDrums, loopBars = 1;
+    int role = rDrums, loopBars = 1, vary = 1;     // vary: 0 straight, 1 some, 2 lots
     uint32_t seed = 1;
     std::array<float, 16> stepPeak {};     // loudest moment in each 16th of the loop's first bar (for picking roll hits)
     int strongestBackbeatStep = 4;         // 16th in bar 1 with the strongest hit on beats 2/4 (claps/snares)
@@ -82,7 +82,7 @@ struct LaneInfo
 inline LaneInfo laneInfoOf (const Stem& s)
 {
     LaneInfo li;
-    li.role = s.role; li.seed = s.seed;
+    li.role = s.role; li.seed = s.seed; li.vary = s.vary;
     if (s.audio == nullptr) return li;
     li.loopBars = s.audio->bars;
     const auto& b = s.audio->loop;
@@ -162,14 +162,17 @@ inline Plan buildPlan (const std::vector<LaneInfo>& lanes, const PlanSettings& p
     for (auto& l : lanes) { hasClap |= l.role == rClap; hasVocal |= l.role == rVocal; hasLead |= l.role == rLead; }
     // which lane carries the build roll: a clap lane, else the full drum loop / tops
     int rollLane = -1;
-    for (int i = 0; i < (int) lanes.size() && rollLane < 0; ++i) if (lanes[(size_t) i].role == rClap) rollLane = i;
-    for (int i = 0; i < (int) lanes.size() && rollLane < 0; ++i) if (lanes[(size_t) i].role == rDrums) rollLane = i;
-    for (int i = 0; i < (int) lanes.size() && rollLane < 0; ++i) if (lanes[(size_t) i].role == rTops || lanes[(size_t) i].role == rPerc) rollLane = i;
+    for (int i = 0; i < (int) lanes.size() && rollLane < 0; ++i) if (lanes[(size_t) i].role == rClap && lanes[(size_t) i].vary > 0) rollLane = i;
+    for (int i = 0; i < (int) lanes.size() && rollLane < 0; ++i) if (lanes[(size_t) i].role == rDrums && lanes[(size_t) i].vary > 0) rollLane = i;
+    for (int i = 0; i < (int) lanes.size() && rollLane < 0; ++i) if ((lanes[(size_t) i].role == rTops || lanes[(size_t) i].role == rPerc) && lanes[(size_t) i].vary > 0) rollLane = i;
 
     for (int li = 0; li < (int) lanes.size(); ++li)
     {
         const auto& L = lanes[(size_t) li];
         const int role = L.role;
+        // this lane's own amount of change: STRAIGHT plays the loop as it is (only coming in and out with the sections)
+        const float lv = L.vary <= 0 ? 0.0f : L.vary == 1 ? var * 0.7f : juce::jmin (1.0f, var * 1.4f);
+        const bool straight = L.vary <= 0;
         juce::Random r ((juce::int64) L.seed * 1000003 + role * 7919 + 11);
         LanePlan lp;
         lp.bars.resize ((size_t) p.totalBars);
@@ -254,9 +257,9 @@ inline Plan buildPlan (const std::vector<LaneInfo>& lanes, const PlanSettings& p
                                 B.fill = fRoll;
                             }
                         }
-                        if ((role == rKick || role == rDrums) && lastBar && li != rollLane) { on = r.nextFloat() < 0.5f; if (on) muteSteps (B, 8, 16); B.fill = fDropout; }
+                        if (role == rDrums && ! straight && lastBar && li != rollLane) { muteSteps (B, 8, 16); B.fill = fDropout; }
                         if (role == rBass && lastBar) { on = false; }
-                        if (role == rVocal && lastBar) { stutter (B, 8, 16, B.steps[0].src, r.nextBool() ? 2 : 4, 0.8f, 1.0f); B.fill = fStutter; }
+                        if (role == rVocal && lastBar && ! straight) { stutter (B, 8, 16, B.steps[0].src, r.nextBool() ? 2 : 4, 0.8f, 1.0f); B.fill = fStutter; }
                         break;
                     case sDrop:
                         on = true;
@@ -285,11 +288,11 @@ inline Plan buildPlan (const std::vector<LaneInfo>& lanes, const PlanSettings& p
 
                 // ---- variation inside full sections: fills on phrase ends, call and response
                 const bool busy = S.type == sDrop || S.type == sGroove || (S.type == sIntro && k >= enter) || (S.type == sOutro && k < exit);
-                if (on && busy && B.fill != fRoll)
+                if (on && busy && B.fill != fRoll && ! straight && (role != rKick || L.vary >= 2))
                 {
                     if (isDrumRole (role))
                     {
-                        if (phraseEnd && r.nextFloat() < 0.35f + 0.65f * var)
+                        if (phraseEnd && r.nextFloat() < 0.35f + 0.65f * lv)
                         {
                             const float pick = r.nextFloat();
                             const int hitStep = (bar % juce::jmax (1, L.loopBars)) * 16 + (role == rClap || role == rDrums ? L.strongestBackbeatStep : 12);
@@ -300,7 +303,7 @@ inline Plan buildPlan (const std::vector<LaneInfo>& lanes, const PlanSettings& p
                             else if (pick < 0.8f)                    { repeatBeat (B, 3, 2); stutter (B, 14, 16, B.steps[14].src, 2); B.fill = fRepeat; }
                             else if (role != rKick)                  { muteSteps (B, 12, 16); B.fill = fDropout; }
                         }
-                        else if (halfPhraseEnd && ! phraseEnd && r.nextFloat() < 0.45f * var && role != rKick)
+                        else if (halfPhraseEnd && ! phraseEnd && r.nextFloat() < 0.45f * lv && role != rKick)
                         {
                             stutter (B, 14, 16, B.steps[14].src, 2); B.fill = fStutter;
                         }
@@ -309,37 +312,37 @@ inline Plan buildPlan (const std::vector<LaneInfo>& lanes, const PlanSettings& p
                     {
                         // call and response: lead and vocal trade 4-bar phrases in drops; on its own the lead answers itself
                         const bool second = ((k / 4) % 2) == 1;
-                        if (S.type == sDrop && hasLead && hasVocal && r.nextFloat() < 0.4f + 0.6f * var)
+                        if (S.type == sDrop && hasLead && hasVocal && r.nextFloat() < 0.4f + 0.6f * lv)
                         {
                             const bool mine = role == rLead ? ! second : second;
                             if (! mine) on = false;
                         }
-                        else if ((k % 4) >= 2 && r.nextFloat() < 0.25f + 0.6f * var)
+                        else if ((k % 4) >= 2 && r.nextFloat() < 0.25f + 0.6f * lv)
                         {
                             respond (B, r); B.fill = fResponse;
                         }
-                        if (on && phraseEnd && r.nextFloat() < 0.5f * var) { stutter (B, 12, 16, B.steps[12].src, 2, 0.8f, 1.0f); B.fill = fStutter; }
+                        if (on && phraseEnd && r.nextFloat() < 0.5f * lv) { stutter (B, 12, 16, B.steps[12].src, 2, 0.8f, 1.0f); B.fill = fStutter; }
                     }
                     else if (role == rBass)
                     {
-                        if (phraseEnd && r.nextFloat() < 0.3f + 0.6f * var)
+                        if (phraseEnd && r.nextFloat() < 0.3f + 0.6f * lv)
                         {
                             if (r.nextBool()) { repeatBeat (B, 3, 2); B.fill = fRepeat; }
                             else { muteSteps (B, 12, 16); B.fill = fDropout; }
                         }
-                        else if (halfPhraseEnd && r.nextFloat() < 0.4f * var) { respond (B, r); B.fill = fResponse; }
+                        else if (halfPhraseEnd && r.nextFloat() < 0.4f * lv) { respond (B, r); B.fill = fResponse; }
                     }
                     else if (role == rChords)
                     {
-                        if (phraseEnd && r.nextFloat() < 0.5f * var) { stutter (B, 12, 16, B.steps[12].src, 2, 0.9f, 1.0f); B.fill = fStutter; }
-                        else if (phraseEnd && r.nextFloat() < 0.4f * var) { reverseBeat (B, 3); B.fill = fReverse; }
+                        if (phraseEnd && r.nextFloat() < 0.5f * lv) { stutter (B, 12, 16, B.steps[12].src, 2, 0.9f, 1.0f); B.fill = fStutter; }
+                        else if (phraseEnd && r.nextFloat() < 0.4f * lv) { reverseBeat (B, 3); B.fill = fReverse; }
                     }
                 }
 
                 // ---- the last beat before a drop is a breath: everything but the roll and FX stops
-                if (on && lastBar && nextIsDrop && li != rollLane && role != rFx && role != rVocal) muteSteps (B, 12, 16);
+                if (on && lastBar && nextIsDrop && li != rollLane && role != rFx && role != rVocal && ! straight) muteSteps (B, 12, 16);
                 // ---- end of a drop going into a break: chords / lead reverse into it
-                if (on && lastBar && S.type == sDrop && si + 1 < (int) p.sections.size() && p.sections[(size_t) si + 1].type == sBreak && (role == rChords || role == rLead) && r.nextFloat() < 0.5f + 0.5f * var)
+                if (on && lastBar && ! straight && S.type == sDrop && si + 1 < (int) p.sections.size() && p.sections[(size_t) si + 1].type == sBreak && (role == rChords || role == rLead) && r.nextFloat() < 0.5f + 0.5f * lv)
                 { reverseBeat (B, 3); B.fill = fReverse; }
 
                 B.on = on;

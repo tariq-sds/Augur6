@@ -33,7 +33,7 @@ inline AudioLoop loadAudio (const juce::File& f)
 }
 
 // How many beats the audio spans, and the tempo it was played at.
-struct LoopTiming { double beats = 16, tempo = 120; int bars = 4; double offsetSec = 0; float confidence = 0; };
+struct LoopTiming { double beats = 16, tempo = 120; int bars = 4; double offsetSec = 0; float confidence = 0; bool shifted = false, fromSet = false; };
 
 inline LoopTiming timingFor (double seconds, double hostBpm)
 {

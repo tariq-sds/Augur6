@@ -2,104 +2,34 @@
 
 namespace k
 {
-    const juce::Colour bg     { 0xff0f1115 };
-    const juce::Colour panel  { 0xff171a20 };
-    const juce::Colour inset  { 0xff0b0d10 };
-    const juce::Colour line   { 0xff262b33 };
-    const juce::Colour text   { 0xffe8ecf1 };
-    const juce::Colour dim    { 0xff8a93a0 };
-    const juce::Colour vocal  { 0xffffb547 };   // warm gold for the voice
-    const juce::Colour ref    { 0xff53b8ff };   // blue for the reference / music
-    const juce::Colour ride   { 0xff7ee0a1 };
-    const juce::Colour dyn    { 0xffc792ff };
+    const juce::Colour bg     = toota::cream;
+    const juce::Colour panel  = toota::cream2;
+    const juce::Colour inset  = toota::cream3;
+    const juce::Colour line   = toota::ink.withAlpha (0.18f);
+    const juce::Colour text   = toota::ink;
+    const juce::Colour dim    = toota::inkSoft;
+    const juce::Colour vocal  = toota::coral;    // the voice
+    const juce::Colour ref    = toota::teal;     // the reference / music
+    const juce::Colour ride   = toota::orange;
+    const juce::Colour dyn    = toota::plum;
 }
 
-static juce::Font f (float size, bool bold = true, float kern = 0.0f)
-{
-    return juce::Font (juce::FontOptions (size).withStyle (bold ? "Bold" : "Regular")).withExtraKerningFactor (kern);
-}
+static juce::Font f (float size, bool bold = true, float kern = 0.0f) { return toota::font (size * 1.1f, bold ? 2 : 1, kern * 0.4f); }
 
 //==============================================================================
-ClLook::ClLook()
+void ClLook::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& c, bool hi, bool down)
 {
-    setColour (juce::TextButton::textColourOffId, k::text);
-    setColour (juce::TextButton::textColourOnId, k::bg);
-    setColour (juce::PopupMenu::backgroundColourId, k::panel);
-    setColour (juce::PopupMenu::textColourId, k::text);
-}
-
-void ClLook::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider& s)
-{
-    const auto accent = s.findColour (juce::Slider::rotarySliderFillColourId);
-    const auto b = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (2.0f);
-    const float r = juce::jmin (b.getWidth(), b.getHeight()) * 0.5f;
-    const auto c = b.getCentre();
-    const float ang = a0 + pos * (a1 - a0);
-    const bool bip = (bool) s.getProperties().getWithDefault ("bipolar", false);
-    juce::Path track;
-    track.addCentredArc (c.x, c.y, r - 2, r - 2, 0, a0, a1, true);
-    g.setColour (k::line);
-    g.strokePath (track, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    const float from = bip ? (a0 + a1) * 0.5f : a0;
-    if (std::abs (ang - from) > 0.01f)
-    {
-        juce::Path arc;
-        arc.addCentredArc (c.x, c.y, r - 2, r - 2, 0, juce::jmin (from, ang), juce::jmax (from, ang), true);
-        g.setColour (accent);
-        g.strokePath (arc, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    }
-    const float body = r - 7;
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2c313a), c.x, c.y - body, juce::Colour (0xff121419), c.x, c.y + body, false));
-    g.fillEllipse (c.x - body, c.y - body, body * 2, body * 2);
-    juce::Path p;
-    p.addRoundedRectangle (-1.4f, -body + 3, 2.8f, body * 0.48f, 1.4f);
-    g.setColour (k::text);
-    g.fillPath (p, juce::AffineTransform::rotation (ang).translated (c.x, c.y));
-}
-
-void ClLook::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool hi, bool)
-{
-    auto r = b.getLocalBounds().toFloat().reduced (1);
-    const bool on = b.getToggleState();
-    const auto accent = b.findColour (juce::ToggleButton::tickColourId);
-    g.setColour (on ? accent.withAlpha (0.2f) : k::inset);
-    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
-    g.setColour (on ? accent : (hi ? k::dim : k::line.brighter (0.3f)));
-    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
-    g.setColour (on ? k::text : k::dim);
-    g.setFont (f (10.5f, true, 0.08f));
-    g.drawText (b.getButtonText().toUpperCase(), r, juce::Justification::centred);
-}
-
-void ClLook::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hi, bool down)
-{
-    auto r = b.getLocalBounds().toFloat().reduced (1);
-    const auto accent = b.findColour (juce::TextButton::buttonOnColourId);
-    const bool on = b.getToggleState();
+    toota::Look::drawButtonBackground (g, b, c, hi, down);
     const float prog = (float) b.getProperties().getWithDefault ("progress", 0.0f);
-    g.setColour (on ? accent : accent.withAlpha (down ? 0.35f : (hi ? 0.22f : 0.12f)));
-    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
     if (prog > 0 && prog < 1)
     {
+        auto r = b.getLocalBounds().toFloat().reduced (1.0f).withTrimmedRight (2.5f).withTrimmedBottom (2.5f);
         g.saveState();
         g.reduceClipRegion (r.withWidth (r.getWidth() * prog).toNearestInt());
-        g.setColour (accent.withAlpha (0.45f));
-        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+        g.setColour (toota::orange.withAlpha (0.6f));
+        g.fillRoundedRectangle (r.reduced (2), r.getHeight() * 0.5f);
         g.restoreState();
     }
-    g.setColour (accent);
-    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.2f);
-}
-
-juce::Font ClLook::getTextButtonFont (juce::TextButton&, int h) { return f (juce::jmin (13.0f, (float) h * 0.45f), true, 0.12f); }
-juce::Font ClLook::getSliderPopupFont (juce::Slider&) { return f (12.0f); }
-
-void ClLook::drawBubble (juce::Graphics& g, juce::BubbleComponent&, const juce::Point<float>&, const juce::Rectangle<float>& body)
-{
-    g.setColour (juce::Colour (0xf00b0d10));
-    g.fillRoundedRectangle (body, 4);
-    g.setColour (k::dim);
-    g.drawRoundedRectangle (body.reduced (0.5f), 4, 1);
 }
 
 //==============================================================================
@@ -243,8 +173,7 @@ void ClarionPanel::drawChroma (juce::Graphics& g, juce::Rectangle<float> r, cons
 
 void ClarionPanel::drawEq (juce::Graphics& g, juce::Rectangle<float> r)
 {
-    g.setColour (k::inset);
-    g.fillRoundedRectangle (r, 6);
+    toota::screen (g, r, 8);
     const double sr = 48000.0;
     auto P = [this] (const char* id) { return proc.apvts.getRawParameterValue (id)->load(); };
     const float fmin = 20, fmax = 20000;
@@ -295,12 +224,7 @@ void ClarionPanel::paint (juce::Graphics& g)
     g.fillAll (k::bg);
 
     // header
-    g.setColour (k::text);
-    g.setFont (f (24.0f, true, 0.24f));
-    g.drawText ("CLARION", 18, 12, 220, 28, juce::Justification::centredLeft);
-    g.setColour (k::dim);
-    g.setFont (f (9.5f, true, 0.2f));
-    g.drawText ("VOCAL CLARITY   |   TOOTA AUDIO", 19, 40, 300, 12, juce::Justification::centredLeft);
+    toota::header (g, { 0, 0, W, 56 }, "CLARION", "vocal clarity");
     const bool sc = proc.musicPresent.load();
     g.setColour (sc ? k::ride : k::vocal);
     g.fillEllipse (560, 26, 8, 8);
@@ -309,10 +233,10 @@ void ClarionPanel::paint (juce::Graphics& g)
 
     auto box = [&] (juce::Rectangle<int> b, const juce::String& title, juce::Colour acc)
     {
-        g.setColour (k::panel);
-        g.fillRoundedRectangle (b.toFloat(), 8);
+        toota::panel (g, b.toFloat(), 12);
         g.setColour (acc);
-        g.fillRoundedRectangle (b.toFloat().withHeight (3).reduced (12, 0), 1.5f);
+        g.fillRoundedRectangle (b.toFloat().withHeight (5).reduced (14, 0).translated (0, 2), 2.5f);
+        g.setColour (k::text);
         g.setFont (f (10.5f, true, 0.2f));
         g.drawText (title, b.getX() + 14, b.getY() + 10, 200, 14, juce::Justification::centredLeft);
     };
@@ -320,7 +244,7 @@ void ClarionPanel::paint (juce::Graphics& g)
     box (toneBox, "TONE", k::vocal);
     box (rideBox, "RIDE", k::ride);
     box (dynBox, "PARALLEL DYNAMICS", k::dyn);
-    box (outBox, "MIX", k::text);
+    box (outBox, "MIX", toota::ink);
 
     // ---- key panel
     const auto vk = proc.vocalKey();

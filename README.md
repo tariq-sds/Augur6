@@ -89,24 +89,27 @@ Mirror stems only analyse during a LISTEN pass, so they cost almost no CPU the r
 
 ## Arc: quick start
 
-Arc turns your own stems into a finished arrangement, Loopworm-style, but with your sounds instead of loop packs.
+Arc turns your stems into a finished arrangement, Loopworm-style, but with your own sounds. Three steps, left to right:
 
-1. Put **Arc** on an empty audio track.
-2. Drop your stems onto it: a handful at once, or a whole folder. Loops or full-length stems, WAV/AIFF/FLAC/MP3, or MIDI clips.
-   Each becomes a lane. Arc reads the file name to tell the **role** (kick, bass, hats, clap, perc, tops, drums, chords, lead, vocal, FX)
-   and listens to the audio when the name doesn't say. Click the coloured role chip to change it, crop to fewer bars, transpose,
-   replace or remove the stem.
-3. Arc finds each stem's **tempo** and **bar 1** and locks it to Live's tempo. The orange line on each waveform is bar 1:
-   drag the waveform sideways to move it (in 16ths), double-click to reset. Long stems start on their busiest 8 bars.
-4. **KEY** keeps bass, chords and lead in **ROOT / SCALE** (press **DETECT** to read the key from your stems).
-   Drums are never retuned and vocals only move if you ask (Transpose in the role menu).
-5. Pick a style (Club, Techno, Melodic, Afro, Radio, DJ Tool), set **Variation**, press **GENERATE** until you like it.
-   Lanes enter and leave per section, filters sweep through intros, builds and outros, claps roll up into each drop, everything
-   takes a breath on the last beat before the drop, and drums, bass, chords and lead get fills, stutters, reverses and
-   call-and-response phrases cut from their own audio. **HOLD** keeps a lane's variations, **DICE** re-rolls one lane. **UNDO / REDO** cover everything.
-6. Listen: with Live playing, Arc follows Live's position. With Live stopped, press Arc's **PLAY**, click or drag on the timeline to move,
-   click a section name to jump, double-click it to loop it. Scroll on the timeline to zoom in on the fills (shift-scroll to move).
-7. Get it into Live: drag a lane's arrow handle (or **DRAG ALL TO LIVE**) into the arrangement at bar 1. Each lane arrives as a full-length,
-   already-arranged audio clip. **EXPORT** writes every lane plus the mix to `~/Music/Arc Exports`.
+**1. Add stems.** Put Arc on an empty audio track. Then either:
+* **Drop your saved Live set (.als)** onto Arc. Every audio track comes in as a lane, named after the track, in exactly the
+  timing Live uses (Arc reads each clip's warp markers, so recordings with a pre-roll and warped clips line up perfectly).
+  MIDI tracks need bouncing to audio first; Arc lists any it skipped.
+* **Or drop audio files / a folder** (WAV, AIFF, FLAC, MP3, or MIDI clips). Files from inside a Live project are matched to
+  the project's set automatically (save the set first). Loops from elsewhere are assumed to start on bar 1, and their
+  tempo comes from their length.
 
-Arc saves its stems with the Live set (by file path), so keep the stems where they are.
+Click a lane's coloured chip to change its role, crop it, transpose it, pick a different source tempo, reset bar 1,
+replace or remove it. The black **1** flag on each waveform is bar 1: drag the waveform sideways to move it, double-click to reset.
+
+**2. Shape it.** Pick a style (Club, Techno, Melodic, Afro, Radio, DJ Tool), set **Variation** and press **GENERATE**.
+Each lane has a **STRAIGHT / SOME / LOTS** button: STRAIGHT plays the loop exactly as it is and only comes in and out
+with the sections (kicks start STRAIGHT), SOME adds the odd fill, LOTS keeps it moving. The **↻** button re-rolls one lane.
+**KEY LOCK** (off by default, since your own stems are already in key) moves bass, chords and lead into ROOT / SCALE.
+UNDO / REDO cover everything.
+
+To listen: with Live playing, Arc follows Live's position. With Live stopped, use Arc's PLAY; click or drag on the
+timeline to move, click a section to jump to it, double-click it to loop it, scroll to zoom.
+
+**3. Send to Live.** Drag a lane's arrow (or **DRAG ALL TO LIVE**) into the arrangement at bar 1: each lane lands as a
+full-length, already-arranged audio clip. **EXPORT** writes every lane plus a mix to `~/Music/Arc Exports`.

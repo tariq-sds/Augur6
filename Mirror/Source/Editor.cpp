@@ -2,94 +2,31 @@
 
 namespace mc
 {
-    const juce::Colour bg    { 0xff0e1014 };
-    const juce::Colour panel { 0xff161a20 };
-    const juce::Colour inset { 0xff0a0c0f };
-    const juce::Colour line  { 0xff252a32 };
-    const juce::Colour text  { 0xffe9edf2 };
-    const juce::Colour dim   { 0xff8790a0 };
-    const juce::Colour ref   { 0xff5ab4ff };
-    const juce::Colour mix   { 0xffffc04d };
-    const juce::Colour good  { 0xff6fe0a0 };
-    const juce::Colour warn  { 0xffff7a59 };
+    const juce::Colour bg    = toota::cream;
+    const juce::Colour panel = toota::cream2;
+    const juce::Colour inset = toota::cream3;
+    const juce::Colour line  = toota::ink.withAlpha (0.18f);
+    const juce::Colour text  = toota::ink;
+    const juce::Colour dim   = toota::inkSoft;
+    const juce::Colour ref   = toota::teal;
+    const juce::Colour mix   = toota::orange;
+    const juce::Colour good  = toota::olive;
+    const juce::Colour warn  = toota::coral;
 }
 
-static juce::Font mf (float s, bool bold = true, float kern = 0) { return juce::Font (juce::FontOptions (s).withStyle (bold ? "Bold" : "Regular")).withExtraKerningFactor (kern); }
+static juce::Font mf (float s, bool bold = true, float kern = 0) { return toota::font (s * 1.1f, bold ? 2 : 1, kern * 0.4f); }
 
-MirrorLook::MirrorLook()
+void MirrorLook::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& c, bool hi, bool down)
 {
-    setColour (juce::TextButton::textColourOffId, mc::text);
-    setColour (juce::TextButton::textColourOnId, mc::bg);
-    setColour (juce::ComboBox::textColourId, mc::text);
-    setColour (juce::PopupMenu::backgroundColourId, mc::panel);
-    setColour (juce::PopupMenu::textColourId, mc::text);
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, mc::mix);
-    setColour (juce::PopupMenu::highlightedTextColourId, mc::bg);
-}
-
-void MirrorLook::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider& s)
-{
-    const auto accent = s.findColour (juce::Slider::rotarySliderFillColourId);
-    const auto b = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (2);
-    const float r = juce::jmin (b.getWidth(), b.getHeight()) * 0.5f;
-    const auto c = b.getCentre();
-    const float ang = a0 + pos * (a1 - a0);
-    const bool bip = (bool) s.getProperties().getWithDefault ("bipolar", false);
-    juce::Path tr; tr.addCentredArc (c.x, c.y, r - 2, r - 2, 0, a0, a1, true);
-    g.setColour (mc::line); g.strokePath (tr, juce::PathStrokeType (3, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    const float from = bip ? (a0 + a1) * 0.5f : a0;
-    if (std::abs (ang - from) > 0.01f)
-    {
-        juce::Path arc; arc.addCentredArc (c.x, c.y, r - 2, r - 2, 0, juce::jmin (from, ang), juce::jmax (from, ang), true);
-        g.setColour (accent); g.strokePath (arc, juce::PathStrokeType (3, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    }
-    const float body = r - 7;
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2b3039), c.x, c.y - body, juce::Colour (0xff111318), c.x, c.y + body, false));
-    g.fillEllipse (c.x - body, c.y - body, body * 2, body * 2);
-    juce::Path p; p.addRoundedRectangle (-1.4f, -body + 3, 2.8f, body * 0.48f, 1.4f);
-    g.setColour (mc::text); g.fillPath (p, juce::AffineTransform::rotation (ang).translated (c.x, c.y));
-}
-
-void MirrorLook::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hi, bool down)
-{
-    auto r = b.getLocalBounds().toFloat().reduced (1);
-    const auto acc = b.findColour (juce::TextButton::buttonOnColourId);
+    toota::Look::drawButtonBackground (g, b, c, hi, down);
     const float prog = (float) b.getProperties().getWithDefault ("progress", 0.0f);
-    const bool on = b.getToggleState();
-    g.setColour (on ? acc : acc.withAlpha (down ? 0.35f : hi ? 0.22f : 0.12f));
-    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
     if (prog > 0 && prog < 1)
     {
+        auto r = b.getLocalBounds().toFloat().reduced (1.0f).withTrimmedRight (2.5f).withTrimmedBottom (2.5f);
         g.saveState(); g.reduceClipRegion (r.withWidth (r.getWidth() * prog).toNearestInt());
-        g.setColour (acc.withAlpha (0.5f)); g.fillRoundedRectangle (r, r.getHeight() * 0.5f); g.restoreState();
+        g.setColour (toota::orange.withAlpha (0.6f)); g.fillRoundedRectangle (r.reduced (2), r.getHeight() * 0.5f); g.restoreState();
     }
-    g.setColour (acc); g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.2f);
 }
-
-juce::Font MirrorLook::getTextButtonFont (juce::TextButton&, int h) { return mf (juce::jmin (12.5f, h * 0.45f), true, 0.1f); }
-
-void MirrorLook::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool, bool)
-{
-    auto r = b.getLocalBounds().toFloat();
-    const bool on = b.getToggleState();
-    auto box = r.withWidth (r.getHeight()).reduced (4);
-    g.setColour (on ? mc::good : mc::inset); g.fillRoundedRectangle (box, 3);
-    g.setColour (on ? mc::good : mc::dim); g.drawRoundedRectangle (box, 3, 1);
-    g.setColour (on ? mc::text : mc::dim); g.setFont (mf (11, true));
-    g.drawText (b.getButtonText(), r.withTrimmedLeft (r.getHeight() + 2), juce::Justification::centredLeft);
-}
-
-void MirrorLook::drawComboBox (juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox&)
-{
-    auto r = juce::Rectangle<float> (0, 0, (float) w, (float) h).reduced (0.5f);
-    g.setColour (mc::inset); g.fillRoundedRectangle (r, 4);
-    g.setColour (mc::line.brighter (0.3f)); g.drawRoundedRectangle (r, 4, 1);
-    juce::Path a; const float ax = (float) w - 10, ay = (float) h * 0.5f;
-    a.addTriangle (ax - 3.5f, ay - 2, ax + 3.5f, ay - 2, ax, ay + 2.5f);
-    g.setColour (mc::dim); g.fillPath (a);
-}
-
-juce::Font MirrorLook::getComboBoxFont (juce::ComboBox&) { return mf (11.5f, true); }
 
 //==============================================================================
 static float apvts_transpose (MirrorProcessor& p) { return std::round (p.apvts.getRawParameterValue (mp::transpose)->load()); }
@@ -108,14 +45,14 @@ static void setupKnob (juce::Slider& s, juce::Colour c, juce::Component& parent,
 MirrorEditor::MirrorEditor (MirrorProcessor& p) : AudioProcessorEditor (p), proc (p)
 {
     setLookAndFeel (&look);
-    for (auto* b : { &masterTab, &stemTab }) { addAndMakeVisible (b); b->setColour (juce::TextButton::buttonOnColourId, mc::mix); }
+    for (auto* b : { &masterTab, &stemTab }) { addAndMakeVisible (b); b->setColour (juce::TextButton::buttonOnColourId, toota::teal); }
     masterTab.onClick = [this] { if (auto* prm = proc.apvts.getParameter (mp::mode)) prm->setValueNotifyingHost (0.0f); layoutForMode(); };
     stemTab.onClick = [this] { if (auto* prm = proc.apvts.getParameter (mp::mode)) prm->setValueNotifyingHost (1.0f); layoutForMode(); };
 
-    loadButton.setColour (juce::TextButton::buttonOnColourId, mc::ref);
-    listenButton.setColour (juce::TextButton::buttonOnColourId, mc::mix);
-    undoButton.setColour (juce::TextButton::buttonOnColourId, mc::dim);
-    keyButton.setColour (juce::TextButton::buttonOnColourId, mc::warn);
+    loadButton.setColour (juce::TextButton::buttonColourId, toota::cream);
+    listenButton.setColour (juce::TextButton::buttonColourId, toota::coral);
+    listenButton.setColour (juce::TextButton::textColourOffId, toota::cream);
+    keyButton.setColour (juce::TextButton::buttonColourId, toota::orange);
     loadButton.onClick = [this]
     {
         chooser = std::make_unique<juce::FileChooser> ("Choose a reference track", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.m4a");
@@ -237,10 +174,7 @@ void MirrorEditor::timerCallback()
 void MirrorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (mc::bg);
-    g.setColour (mc::text); g.setFont (mf (24, true, 0.3f));
-    g.drawText ("MIRROR", 16, 10, 200, 30, juce::Justification::centredLeft);
-    g.setColour (mc::dim); g.setFont (mf (9.5f, true, 0.2f));
-    g.drawText (masterMode ? "REFERENCE MIX MATCH   |   TOOTA AUDIO" : "STEM   |   TOOTA AUDIO", 17, 40, 320, 12, juce::Justification::centredLeft);
+    toota::header (g, { 0, 0, getWidth(), 56 }, "MIRROR", masterMode ? "reference mix match" : "stem");
     if (masterMode) paintMaster (g); else paintStem (g);
 }
 
@@ -286,7 +220,7 @@ void MirrorEditor::paintMaster (juce::Graphics& g)
     g.drawText (bridge ? "LIVE BRIDGE CONNECTED: FADERS WILL MOVE" : "NO LIVE BRIDGE: MIRROR GAIN ON EACH STEM IS USED", 434, 22, 420, 16, juce::Justification::centredLeft);
 
     // reference panel
-    g.setColour (mc::panel); g.fillRoundedRectangle (juce::Rectangle<float> (350, 62, 634, 222), 8);
+    toota::panel (g, juce::Rectangle<float> (350, 62, 634, 222), 12);
     g.setColour (mc::dim); g.setFont (mf (9, true, 0.15f));
     g.drawText ("REFERENCE", 366, 70, 200, 12, juce::Justification::centredLeft);
     g.setColour (ref.valid ? mc::ref : mc::dim); g.setFont (mf (15, true));
@@ -309,7 +243,7 @@ void MirrorEditor::paintMaster (juce::Graphics& g)
     // spectrum comparison
     const auto sol = proc.lastSolve();
     auto plot = juce::Rectangle<float> (366, 126, 602, 146);
-    g.setColour (mc::inset); g.fillRoundedRectangle (plot, 6);
+    toota::screen (g, plot, 8);
     auto curve = [&] (const mr::Bands& b, juce::Colour c, float width, bool fill)
     {
         float mean = 0, cnt = 0;
@@ -346,7 +280,7 @@ void MirrorEditor::paintMaster (juce::Graphics& g)
     g.drawText ("TONE MATCH", 18, 598, 100, 12, juce::Justification::centred);
     g.drawText ("HEADROOM", 108, 598, 100, 12, juce::Justification::centred);
     g.drawText ("MASTER TRIM", 198, 598, 100, 12, juce::Justification::centred);
-    g.setColour (mc::panel); g.fillRoundedRectangle (juce::Rectangle<float> (16, 216, 318, 300), 8);
+    toota::panel (g, juce::Rectangle<float> (16, 216, 318, 300), 12);
     g.setColour (mc::text); g.setFont (mf (11, false));
     juce::AttributedString as;
     as.setText (proc.statusText());
@@ -361,7 +295,7 @@ void MirrorEditor::paintMaster (juce::Graphics& g)
 
     // stem table
     auto t = tableArea.toFloat();
-    g.setColour (mc::panel); g.fillRoundedRectangle (t, 8);
+    toota::panel (g, t, 12);
     const int cols[] { 14, 168, 246, 336, 420, 496 };
     const char* heads[] { "STEM", "ROLE", "LEVEL", "LIVE FADER", "CHANGE", "KEY" };
     g.setColour (mc::dim); g.setFont (mf (9, true, 0.12f));

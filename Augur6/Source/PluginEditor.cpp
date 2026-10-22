@@ -3,155 +3,34 @@
 
 namespace colours
 {
-    const juce::Colour panel     { 0xff141414 };
-    const juce::Colour panelHi   { 0xff1c1c1c };
-    const juce::Colour line      { 0xff3a3833 };
-    const juce::Colour legend    { 0xffe9e2d0 };
-    const juce::Colour legendDim { 0xffa9a294 };
-    const juce::Colour amber     { 0xffe8a33d };
-    const juce::Colour led       { 0xffff3b2f };
-    const juce::Colour ledOff    { 0xff3a1512 };
+    const juce::Colour panel     = toota::cream;
+    const juce::Colour panelHi   = toota::cream;
+    const juce::Colour line      = toota::ink.withAlpha (0.25f);
+    const juce::Colour legend    = toota::ink;
+    const juce::Colour legendDim = toota::inkSoft;
+    const juce::Colour amber     = toota::orange;
+    const juce::Colour led       = toota::coral;
+    const juce::Colour ledOff    = toota::cream3;
 }
 
-static juce::Font uiFont (float size, bool bold = false, float kerning = 0.0f)
-{
-    auto opts = juce::FontOptions (size).withStyle (bold ? "Bold" : "Regular");
-    return juce::Font (opts).withExtraKerningFactor (kerning);
-}
+static juce::Font uiFont (float size, bool bold = false, float kerning = 0.0f) { return toota::font (size * 1.12f, bold ? 2 : 1, kerning * 0.4f); }
 
 //==============================================================================
-AugurLook::AugurLook()
-{
-    setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xff1b1b1b));
-    setColour (juce::PopupMenu::textColourId, colours::legend);
-    setColour (juce::PopupMenu::headerTextColourId, colours::amber);
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, colours::amber);
-    setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::black);
-    setColour (juce::ComboBox::textColourId, colours::amber);
-    setColour (juce::TextButton::textColourOffId, colours::amber);
-    setColour (juce::TextButton::textColourOnId, colours::amber);
-    setColour (juce::BubbleComponent::backgroundColourId, juce::Colour (0xee0d0d0d));
-    setColour (juce::BubbleComponent::outlineColourId, colours::amber.withAlpha (0.6f));
-    setColour (juce::TooltipWindow::textColourId, colours::legend);
-}
-
-void AugurLook::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
-                                  float startAngle, float endAngle, juce::Slider& s)
-{
-    const auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (2.0f);
-    const float r = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
-    const auto c = bounds.getCentre();
-    const float angle = startAngle + pos * (endAngle - startAngle);
-    const bool bipolar = (bool) s.getProperties().getWithDefault ("bipolar", false);
-
-    // scale track and value arc
-    juce::Path track;
-    track.addCentredArc (c.x, c.y, r - 1.5f, r - 1.5f, 0.0f, startAngle, endAngle, true);
-    g.setColour (juce::Colour (0xff2c2a27));
-    g.strokePath (track, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-    const float from = bipolar ? (startAngle + endAngle) * 0.5f : startAngle;
-    if (std::abs (angle - from) > 0.01f)
-    {
-        juce::Path arc;
-        arc.addCentredArc (c.x, c.y, r - 1.5f, r - 1.5f, 0.0f, juce::jmin (from, angle), juce::jmax (from, angle), true);
-        g.setColour (colours::amber.withAlpha (s.isEnabled() ? 0.95f : 0.35f));
-        g.strokePath (arc, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    }
-
-    // skirt
-    const float body = r - 6.0f;
-    g.setColour (juce::Colours::black.withAlpha (0.55f));
-    g.fillEllipse (c.x - body + 1.0f, c.y - body + 2.5f, body * 2.0f, body * 2.0f);
-    juce::ColourGradient skirt (juce::Colour (0xff3b3936), c.x, c.y - body,
-                                juce::Colour (0xff0b0b0b), c.x, c.y + body, false);
-    g.setGradientFill (skirt);
-    g.fillEllipse (c.x - body, c.y - body, body * 2.0f, body * 2.0f);
-    g.setColour (juce::Colour (0xff050505));
-    g.drawEllipse (c.x - body, c.y - body, body * 2.0f, body * 2.0f, 1.0f);
-
-    // brushed cap
-    const float cap = body * 0.62f;
-    juce::ColourGradient capGrad (juce::Colour (0xff4a4844), c.x - cap, c.y - cap,
-                                  juce::Colour (0xff1f1e1c), c.x + cap, c.y + cap, false);
-    g.setGradientFill (capGrad);
-    g.fillEllipse (c.x - cap, c.y - cap, cap * 2.0f, cap * 2.0f);
-
-    // pointer
-    juce::Path ptr;
-    ptr.addRoundedRectangle (-1.2f, -body + 1.5f, 2.4f, body * 0.55f, 1.0f);
-    g.setColour (colours::legend);
-    g.fillPath (ptr, juce::AffineTransform::rotation (angle).translated (c.x, c.y));
-}
-
+// LED switches, TOOTA style: a cream sticker key with a coral LED
 void AugurLook::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool highlighted, bool down)
 {
-    auto r = b.getLocalBounds().toFloat().reduced (1.0f);
-    g.setColour (down ? juce::Colour (0xff101010) : juce::Colour (0xff1f1e1c));
-    g.fillRoundedRectangle (r, 3.0f);
-    g.setColour (highlighted ? colours::legendDim : colours::line);
-    g.drawRoundedRectangle (r, 3.0f, 1.0f);
-
+    auto r = b.getLocalBounds().toFloat().reduced (1.0f).withTrimmedRight (2.0f).withTrimmedBottom (2.0f);
+    if (down) r = r.translated (1.0f, 1.0f);
+    toota::sticker (g, r, highlighted ? toota::cream2 : toota::cream, 6.0f, down ? 0.0f : 2.0f, 1.6f);
     const bool on = b.getToggleState();
-    const float d = 6.0f;
-    const auto ledC = juce::Point<float> (r.getX() + 9.0f, r.getCentreY());
-    if (on)
-    {
-        g.setColour (colours::led.withAlpha (0.25f));
-        g.fillEllipse (ledC.x - d, ledC.y - d, d * 2.0f, d * 2.0f);
-    }
-    g.setColour (on ? colours::led : colours::ledOff);
-    g.fillEllipse (ledC.x - d * 0.5f, ledC.y - d * 0.5f, d, d);
-
-    g.setColour (on ? colours::legend : colours::legendDim);
-    g.setFont (uiFont (10.5f, true, 0.04f));
-    g.drawFittedText (b.getButtonText().toUpperCase(), r.withTrimmedLeft (17.0f).toNearestInt(),
-                      juce::Justification::centredLeft, 1, 0.8f);
+    const float d = 8.0f;
+    const auto c = juce::Point<float> (r.getX() + 10.0f, r.getCentreY());
+    g.setColour (on ? colours::led : colours::ledOff); g.fillEllipse (c.x - d * 0.5f, c.y - d * 0.5f, d, d);
+    g.setColour (toota::ink); g.drawEllipse (c.x - d * 0.5f, c.y - d * 0.5f, d, d, 1.3f);
+    g.setColour (toota::ink);
+    g.setFont (uiFont (10.0f, true, 0.02f));
+    g.drawFittedText (b.getButtonText().toUpperCase(), r.withTrimmedLeft (19.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
 }
-
-void AugurLook::drawComboBox (juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box)
-{
-    auto r = juce::Rectangle<float> (0, 0, (float) w, (float) h).reduced (0.5f);
-    g.setColour (juce::Colour (0xff0e0e0e));
-    g.fillRoundedRectangle (r, 3.0f);
-    g.setColour (box.hasKeyboardFocus (true) ? colours::legendDim : colours::line);
-    g.drawRoundedRectangle (r, 3.0f, 1.0f);
-    juce::Path arrow;
-    const float ax = (float) w - 10.0f, ay = (float) h * 0.5f;
-    arrow.addTriangle (ax - 3.5f, ay - 2.0f, ax + 3.5f, ay - 2.0f, ax, ay + 2.5f);
-    g.setColour (colours::legendDim);
-    g.fillPath (arrow);
-}
-
-juce::Font AugurLook::getComboBoxFont (juce::ComboBox&) { return uiFont (11.0f, true); }
-
-void AugurLook::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
-{
-    label.setBounds (4, 0, box.getWidth() - 18, box.getHeight());
-    label.setFont (getComboBoxFont (box));
-    label.setJustificationType (juce::Justification::centredLeft);
-}
-
-void AugurLook::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool highlighted, bool down)
-{
-    auto r = b.getLocalBounds().toFloat().reduced (0.5f);
-    g.setColour (down ? juce::Colour (0xff070707) : juce::Colour (0xff0e0e0e));
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (highlighted ? colours::amber.withAlpha (0.7f) : colours::line);
-    g.drawRoundedRectangle (r, 4.0f, 1.0f);
-}
-
-juce::Font AugurLook::getTextButtonFont (juce::TextButton&, int h) { return uiFont (juce::jmin (14.0f, h * 0.55f), true, 0.03f); }
-
-void AugurLook::drawBubble (juce::Graphics& g, juce::BubbleComponent&, const juce::Point<float>&, const juce::Rectangle<float>& body)
-{
-    g.setColour (juce::Colour (0xf00b0b0b));
-    g.fillRoundedRectangle (body, 3.0f);
-    g.setColour (colours::amber.withAlpha (0.7f));
-    g.drawRoundedRectangle (body.reduced (0.5f), 3.0f, 1.0f);
-}
-
-juce::Font AugurLook::getSliderPopupFont (juce::Slider&) { return uiFont (12.0f, true); }
 
 //==============================================================================
 namespace
@@ -446,87 +325,47 @@ void AugurPanel::refresh()
 
 void AugurPanel::drawWood (juce::Graphics& g, juce::Rectangle<float> r)
 {
-    juce::ColourGradient wood (juce::Colour (0xff6b3f1f), r.getX(), r.getY(),
-                               juce::Colour (0xff3a2110), r.getRight(), r.getY(), false);
-    wood.addColour (0.45, juce::Colour (0xff57321a));
-    g.setGradientFill (wood);
-    g.fillRoundedRectangle (r, 5.0f);
-
-    juce::Random rnd ((juce::int64) (r.getX() * 31.0f + 7.0f));
-    for (int i = 0; i < 46; ++i)
-    {
-        const float gx = r.getX() + 2.0f + rnd.nextFloat() * (r.getWidth() - 4.0f);
-        g.setColour (juce::Colour (0xff1e0f05).withAlpha (0.10f + rnd.nextFloat() * 0.22f));
-        juce::Path grain;
-        grain.startNewSubPath (gx, r.getY() + 3.0f);
-        float cx = gx;
-        for (float yy = r.getY(); yy < r.getBottom(); yy += 24.0f)
-        {
-            cx = juce::jlimit (r.getX() + 1.0f, r.getRight() - 1.0f, cx + (rnd.nextFloat() - 0.5f) * 1.6f);
-            grain.lineTo (cx, juce::jmin (yy + 24.0f, r.getBottom() - 3.0f));
-        }
-        g.strokePath (grain, juce::PathStrokeType (0.6f + rnd.nextFloat() * 0.8f));
-    }
-    g.setColour (juce::Colours::black.withAlpha (0.5f));
-    g.drawRoundedRectangle (r, 5.0f, 1.0f);
+    // the classic wooden end cheeks, as chunky brand-coloured stripes
+    toota::sticker (g, r, toota::teal, 8.0f, 0.0f, 2.2f);
+    const float h = r.getHeight() / 3.0f;
+    g.setColour (toota::coral); g.fillRect (r.reduced (2.2f).withTop (r.getY() + h).withHeight (h));
+    g.setColour (toota::orange); g.fillRect (r.reduced (2.2f).withTop (r.getY() + h * 2).withBottom (r.getBottom() - 8));
+    g.setColour (toota::ink); g.drawRoundedRectangle (r.reduced (1.1f), 8.0f, 2.2f);
 }
 
 void AugurPanel::paint (juce::Graphics& g)
 {
     auto all = getLocalBounds().toFloat();
-    g.fillAll (juce::Colour (0xff0a0a0a));
+    g.fillAll (toota::cream);
 
-    // wooden end cheeks
-    drawWood (g, { 6.0f, 6.0f, 26.0f, all.getHeight() - 12.0f });
-    drawWood (g, { all.getWidth() - 32.0f, 6.0f, 26.0f, all.getHeight() - 12.0f });
+    drawWood (g, { 6.0f, 6.0f, 22.0f, all.getHeight() - 12.0f });
+    drawWood (g, { all.getWidth() - 28.0f, 6.0f, 22.0f, all.getHeight() - 12.0f });
 
-    // main panel
-    auto panelR = juce::Rectangle<float> (32.0f, 6.0f, all.getWidth() - 64.0f, all.getHeight() - 12.0f);
-    juce::ColourGradient bg (colours::panelHi, 0, panelR.getY(), colours::panel, 0, panelR.getBottom(), false);
-    g.setGradientFill (bg);
-    g.fillRect (panelR);
-
-    // header strip
-    g.setColour (juce::Colour (0xff0f0f0f));
-    g.fillRect (panelR.withHeight (54.0f));
-    g.setColour (colours::line);
-    g.drawHorizontalLine (60, panelR.getX(), panelR.getRight());
-
-    g.setColour (colours::legend);
-    g.setFont (uiFont (26.0f, true, 0.18f));
-    g.drawText ("AUGUR-6", kContentX + 6, 12, 200, 32, juce::Justification::centredLeft);
+    // header
+    toota::header (g, { 32, 0, (int) all.getWidth() - 64, 60 }, "AUGUR-6", "six-voice polysynth");
     g.setColour (colours::legendDim);
-    g.setFont (uiFont (9.5f, true, 0.22f));
-    g.drawText ("SIX-VOICE POLYPHONIC SYNTHESIZER", kContentX + 8, 41, 300, 12, juce::Justification::centredLeft);
-
-    g.setColour (colours::legendDim);
-    g.setFont (uiFont (9.5f, true, 0.22f));
-    g.drawText ("PROGRAM", 452, 2, 120, 12, juce::Justification::centredLeft);
-    g.drawText ("TOOTA AUDIO", getWidth() - 260, 22, 220, 14, juce::Justification::centredRight);
+    g.setFont (uiFont (9.5f, true, 0.1f));
+    g.drawText ("PROGRAM", 452, 1, 120, 12, juce::Justification::centredLeft);
 
     // sections
     for (const auto& s : sections)
     {
         auto r = s.area.toFloat();
-        g.setColour (juce::Colour (0xff181715));
-        g.fillRoundedRectangle (r, 4.0f);
-        g.setColour (colours::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
-
-        g.setFont (uiFont (10.5f, true, 0.2f));
+        toota::panel (g, r, 10.0f);
+        g.setFont (uiFont (11.0f, true, 0.1f));
         const int tw = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), s.title) + 16;
-        auto titleR = juce::Rectangle<int> (s.area.getX() + 10, s.area.getY() + 6, tw, 14);
-        g.setColour (colours::legend);
+        auto titleR = juce::Rectangle<int> (s.area.getX() + 10, s.area.getY() + 5, tw, 16);
+        g.setColour (toota::ink);
         g.drawText (s.title, titleR, juce::Justification::centredLeft);
         g.setColour (colours::line);
-        g.drawHorizontalLine (s.area.getY() + 13, (float) titleR.getRight(), (float) s.area.getRight() - 10.0f);
+        g.fillRect ((float) titleR.getRight(), (float) s.area.getY() + 12.5f, (float) s.area.getRight() - 10.0f - titleR.getRight(), 1.5f);
     }
 
     // captions
     for (const auto& c : captions)
     {
-        g.setColour (c.small ? colours::legendDim.withAlpha (0.75f) : colours::legendDim);
-        g.setFont (uiFont (c.small ? 8.0f : 9.5f, true, c.small ? 0.06f : 0.1f));
+        g.setColour (c.small ? colours::legendDim : colours::legend);
+        g.setFont (uiFont (c.small ? 8.0f : 9.0f, true, c.small ? 0.06f : 0.08f));
         g.drawText (c.text, c.area, juce::Justification::centred);
     }
 
@@ -538,19 +377,15 @@ void AugurPanel::paint (juce::Graphics& g)
         const float cx = (float) voiceLedArea.getX() + ledW * ((float) i + 0.5f);
         const float cy = (float) voiceLedArea.getCentreY();
         const bool on = i < v;
-        if (on)
-        {
-            g.setColour (colours::led.withAlpha (0.22f));
-            g.fillEllipse (cx - 9.0f, cy - 9.0f, 18.0f, 18.0f);
-        }
-        g.setColour (on ? colours::led : colours::ledOff);
-        g.fillEllipse (cx - 4.5f, cy - 4.5f, 9.0f, 9.0f);
-        g.setColour (colours::legendDim);
+        g.setColour (on ? toota::accent (i % 3) : colours::ledOff);
+        g.fillEllipse (cx - 6.0f, cy - 6.0f, 12.0f, 12.0f);
+        g.setColour (toota::ink); g.drawEllipse (cx - 6.0f, cy - 6.0f, 12.0f, 12.0f, 1.6f);
+        g.setColour (colours::legend);
         g.setFont (uiFont (9.0f, true));
         g.drawText (juce::String (i + 1), juce::Rectangle<float> (cx - 10.0f, cy + 10.0f, 20.0f, 12.0f), juce::Justification::centred);
     }
-    g.setColour (colours::legendDim.withAlpha (0.6f));
-    g.setFont (uiFont (8.5f, true, 0.18f));
+    g.setColour (colours::legendDim);
+    g.setFont (uiFont (8.5f, true, 0.1f));
     g.drawText ("ANALOG-MODELLED POLYSYNTH",
                 voiceLedArea.getX() - 10, voiceLedArea.getBottom() + 34, voiceLedArea.getWidth() + 20, 12,
                 juce::Justification::centred);
@@ -572,7 +407,7 @@ Augur6Editor::Augur6Editor (Augur6Processor& p) : AudioProcessorEditor (p), pane
 
 void Augur6Editor::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff0a0a0a));
+    g.fillAll (toota::cream);
 }
 
 void Augur6Editor::resized()

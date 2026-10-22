@@ -1,6 +1,7 @@
 #pragma once
 #include "AudioToMidi.h"
 #include "../../Mirror/Source/PhaseVocoder.h"
+#include "LiveSet.h"
 #include <memory>
 
 // Arc 2: audio stems as lanes. Each stem is decoded, its tempo and bar 1 found, cropped, time-stretched
@@ -14,6 +15,8 @@ inline const char* roleName (int r)
     static const char* n[] { "KICK", "BASS", "HATS", "CLAP", "PERC", "TOPS", "DRUMS", "CHORDS", "LEAD", "VOCAL", "FX" };
     return n[juce::jlimit (0, kRoles - 1, r)];
 }
+// how much a lane changes by default: a kick stays dead straight, percussion and leads move most
+inline int defaultVary (int r) { return r == rKick ? 0 : (r == rPerc || r == rTops || r == rLead) ? 2 : 1; }
 inline bool isDrumRole (int r) { return r == rKick || r == rHats || r == rClap || r == rPerc || r == rTops || r == rDrums; }
 inline bool isTonalRole (int r) { return r == rBass || r == rChords || r == rLead || r == rVocal; }
 inline juce::Colour roleColour (int r)
@@ -33,7 +36,7 @@ inline int roleFromName (const juce::String& fileName)
     if (has ({ "bass", " sub", "808", "reese" })) return rBass;
     if (has ({ "hat", " hh", "hihat", "shaker", "ride", "cymbal" })) return rHats;
     if (has ({ "clap", "snare", " snr", " sd ", " cp ", "rimshot" })) return rClap;
-    if (has ({ "perc", "conga", "bongo", " tom", "rim ", "tamb", "cowbell", "clave" })) return rPerc;
+    if (has ({ "perc", "conga", "bongo", " tom", "rim ", "tamb", "cowbell", "clave", "metal", " hit", "block", "triangle", "agogo", "timbale" })) return rPerc;
     if (has ({ "top", "tops", "groove" })) return rTops;
     if (has ({ "drum", "beat", "break", "kit" })) return rDrums;
     if (has ({ "chord", " pad", "keys", "piano", "stab", "organ", "string", "rhodes", "synth" })) return rChords;
@@ -225,20 +228,181 @@ struct Stem
     std::vector<float> peaks;          // |max| per pixel bucket of the prepared loop, for the waveform
     juce::String report;
     bool fromMidi = false;
+    std::vector<double> tempoChoices;  // other likely source tempos (bar counts), best first
+    juce::String clipTrack;            // the Live track this came from, when read from a Live set
+    int vary = 1;                      // 0 straight, 1 some, 2 lots
 };
+
+inline juce::String timingReport (const arc::LoopTiming& t)
+{
+    const double tr = std::round (t.tempo * 100) / 100;
+    return juce::String (t.bars) + (t.bars == 1 ? " bar, " : " bars, ") + juce::String (tr, std::abs (tr - std::round (tr)) < 0.005 ? 0 : 2) + " BPM"
+         + (t.fromSet ? ", synced from your Live set" : t.shifted ? ", bar 1 found " + juce::String (juce::roundToInt (t.offsetSec * 1000)) + " ms in" : juce::String());
+}
 
 inline int sourceBars (const Stem& s) { return juce::jmax (1, s.timing.bars); }
 
-inline void analyseStem (Stem& s, double hostBpm, int forcedRole);
 
-// decode a file into a stem (no preparation yet)
-inline bool loadStem (Stem& s, const juce::File& f, double hostBpm)
+// ---------------------------------------------------------------- timing
+// Loops and stems are almost always bounced from bar 1 and cut to whole bars, so that is the starting
+// assumption: bar 1 is the first sample and the tempo is exactly (bars x 4 beats) / length. The hits
+// only decide HOW MANY bars the file is (and so its tempo); bar 1 is only moved for a drum loop whose
+// hits clearly don't line up with the file start.
+struct TimingResult { arc::LoopTiming t; std::vector<double> choices; };
+
+inline TimingResult stemTiming (const arc::AudioLoop& a, double hostBpm, int role)
+{
+    TimingResult r;
+    const double dur = (double) a.mono.size() / a.sr;
+    hostBpm = juce::jlimit (40.0, 250.0, hostBpm);
+    arc::Stft s (a.mono, a.sr, 10, 256);
+    const int F = (int) s.mag.size();
+    const float hz = s.hzPerBin();
+    std::vector<float> all ((size_t) F, 0), low ((size_t) F, 0);
+    for (int f = 0; f < F; ++f)
+        for (int b = 1; b < (int) s.mag[(size_t) f].size(); ++b)
+        {
+            const float m = s.mag[(size_t) f][(size_t) b], p = m * m;
+            all[(size_t) f] += p;
+            if (b * hz < 150) low[(size_t) f] += p;
+        }
+    for (auto* v : { &all, &low })
+    {
+        std::vector<float> d ((size_t) F);
+        for (int f = 0; f < F; ++f)
+        {
+            const float cur = (*v)[(size_t) f], prev = (*v)[(size_t) (f > 0 ? f - 1 : F - 1)];
+            d[(size_t) f] = juce::jmax (0.0f, std::log10 (cur + 1e-10f) - std::log10 (prev + 1e-10f)) * std::sqrt (cur);
+        }
+        *v = d;
+    }
+    const double fps = a.sr / s.hop, lead = 0.25 * (double) s.N / a.sr;
+    auto at = [&] (const std::vector<float>& v, double fr)
+    {
+        if (F == 0) return 0.0f;
+        const int i = (int) std::round (fr); float m = 0;
+        for (int k = i - 1; k <= i + 1; ++k) m = juce::jmax (m, v[(size_t) (((k % F) + F) % F)]);
+        return m;
+    };
+    // how well the hits sit on a beat grid of this tempo starting `phaseSec` into the file
+    auto fit = [&] (double tempo, double phaseSec)
+    {
+        const double P = 60.0 / tempo * fps;
+        double sc = 0; int n = 0;
+        for (double fr = (phaseSec + lead) * fps; fr < F; fr += P) { sc += at (all, fr) + 2.0 * at (low, fr); ++n; }
+        return n ? sc / n : 0.0;
+    };
+
+    // tempo evidence shouldn't depend on where the beat starts: best fit over all phases
+    auto fitAny = [&] (double tempo)
+    {
+        const double beatSec = 60.0 / tempo;
+        double best = 0;
+        for (double ph = 0; ph < beatSec; ph += 0.004) best = std::max (best, fit (tempo, ph));
+        return best;
+    };
+    // 1) how many bars: every whole-bar count with a plausible tempo is a candidate
+    struct Cand { int bars; double tempo, score; };
+    std::vector<Cand> cands;
+    for (int bars = 1; bars <= 512; ++bars)
+    {
+        const double tempo = bars * 240.0 / dur;
+        if (tempo < 60) continue;
+        if (tempo > 200) break;
+        const bool pow2 = (bars & (bars - 1)) == 0;
+        const double prior = std::exp (-std::abs (std::log (tempo / hostBpm)) * 8.0)          // near Live's tempo
+                           * (pow2 ? 1.15 : bars % 4 == 0 ? 1.05 : 1.0)                         // 1, 2, 4, 8... bars
+                           * (std::abs (tempo - hostBpm) < 0.02 ? 1.3 : 1.0);                   // exactly Live's tempo
+        cands.push_back ({ bars, tempo, (fitAny (tempo) + 1e-6) * prior });
+    }
+    {
+        // recordings and bounces with a tail aren't whole bars long: always offer Live's own tempo too
+        bool hasHost = false;
+        for (auto& c : cands) hasHost |= std::abs (c.tempo - hostBpm) < 0.005 * hostBpm;
+        const int hb = (int) std::floor (dur * hostBpm / 240.0 + 0.02);
+        if (! hasHost && hb >= 1)
+            cands.push_back ({ hb, hostBpm, (fitAny (hostBpm) + 1e-6) * ((hb & (hb - 1)) == 0 ? 1.15 : hb % 4 == 0 ? 1.05 : 1.0) });
+    }
+    if (cands.empty())
+    {
+        // not a whole number of bars at any sensible tempo: use Live's tempo and round the length
+        r.t.tempo = hostBpm; r.t.bars = juce::jmax (1, (int) std::round (dur * hostBpm / 240.0)); r.t.beats = r.t.bars * 4.0;
+    }
+    else
+    {
+        std::sort (cands.begin(), cands.end(), [] (const Cand& x, const Cand& y) { return x.score > y.score; });
+        r.t.tempo = cands[0].tempo; r.t.bars = cands[0].bars; r.t.beats = cands[0].bars * 4.0;
+        for (size_t i = 0; i < cands.size() && r.choices.size() < 6; ++i) r.choices.push_back (cands[i].tempo);
+    }
+    r.t.offsetSec = 0;
+
+    // 2) bar 1: only for a kick or full drum loop whose hits clearly sit somewhere other than the file start
+    //    (hats, percussion, basslines are often on the offbeat on purpose)
+    if ((role == rDrums || role == rKick) && F > 16)
+    {
+        const double beatSec = 60.0 / r.t.tempo;
+        const double f0 = fit (r.t.tempo, 0);
+        double bestPh = 0, bestF = f0;
+        for (double ph = 0.002; ph < beatSec; ph += 0.002) { const double v = fit (r.t.tempo, ph); if (v > bestF) { bestF = v; bestPh = ph; } }
+        if (bestF > 1.6 * f0 && bestPh > 0.015 && bestPh < beatSec - 0.015)
+        {
+            // which beat of the bar is the 1: kick on it, backbeat on 2 and 4
+            std::vector<float> mid ((size_t) F, 0);
+            for (int f = 0; f < F; ++f)
+            {
+                float e = 0, prevE = 0;
+                for (int b = 1; b < (int) s.mag[(size_t) f].size(); ++b) { const float fr = b * hz; if (fr > 1000 && fr < 5000) { e += s.mag[(size_t) f][(size_t) b] * s.mag[(size_t) f][(size_t) b]; prevE += s.mag[(size_t) (f > 0 ? f - 1 : F - 1)][(size_t) b] * s.mag[(size_t) (f > 0 ? f - 1 : F - 1)][(size_t) b]; } }
+                mid[(size_t) f] = juce::jmax (0.0f, std::log10 (e + 1e-10f) - std::log10 (prevE + 1e-10f)) * std::sqrt (e);
+            }
+            const double P = beatSec * fps;
+            int bestJ = 0; double sc0 = 0, bestD = -1;
+            for (int j = 0; j < 4; ++j)
+            {
+                double sc = 0;
+                for (int m = 0; m < r.t.bars; ++m)
+                {
+                    const double fr = (bestPh + lead) * fps + (j + 4.0 * m) * P;
+                    sc += at (low, fr) + 0.6 * at (mid, fr + P) + 0.6 * at (mid, fr + 3 * P) - 0.3 * at (mid, fr);
+                }
+                if (j == 0) { sc0 = sc; bestD = sc; }
+                else if (sc > bestD * 1.1 && sc > sc0 * 1.3) { bestD = sc; bestJ = j; }   // ties go to the earliest beat
+            }
+            // refine the phase to about a millisecond from the raw signal (STFT frames smear onsets)
+            {
+                const int blk = std::max (16, (int) (a.sr * 0.001)), nb = (int) a.mono.size() / blk;
+                std::vector<float> e ((size_t) nb), on ((size_t) nb);
+                for (int b = 0; b < nb; ++b) { double sum = 0; for (int i = b * blk; i < (b + 1) * blk; ++i) sum += (double) a.mono[(size_t) i] * a.mono[(size_t) i]; e[(size_t) b] = (float) sum; }
+                float mx = 0;
+                for (int b = 0; b < nb; ++b) { on[(size_t) b] = juce::jmax (0.0f, std::log10 (e[(size_t) b] + 1e-9f) - std::log10 (e[(size_t) ((b + nb - 1) % nb)] + 1e-9f)) * std::sqrt (e[(size_t) b]); mx = juce::jmax (mx, on[(size_t) b]); }
+                std::vector<double> devs;
+                const double blkSec = (double) blk / a.sr;
+                for (double pred = bestPh; pred < dur && nb > 0; pred += beatSec)
+                {
+                    const int c = (int) std::round (pred / blkSec), w = (int) std::ceil (0.03 / blkSec);
+                    int bi = -1; float bv = 0;
+                    for (int b = c - w; b <= c + w; ++b) { const int bb = ((b % nb) + nb) % nb; if (on[(size_t) bb] > bv) { bv = on[(size_t) bb]; bi = b; } }
+                    if (bi >= 0 && bv > 0.25f * mx) devs.push_back (bi * blkSec - pred);
+                }
+                if (devs.size() >= 2) { std::sort (devs.begin(), devs.end()); bestPh += devs[devs.size() / 2]; }
+            }
+            double first = bestPh + bestJ * beatSec;
+            const double barSec = 4 * beatSec;
+            first = std::fmod (first, barSec);
+            r.t.offsetSec = first;
+            r.t.shifted = true;
+        }
+    }
+    return r;
+}
+
+// decode a file into a stem (no analysis)
+inline bool decodeStem (Stem& s, const juce::File& f)
 {
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
     std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
     if (r == nullptr || r->lengthInSamples < 2000) return false;
-    const int n = (int) juce::jmin (r->lengthInSamples, (juce::int64) (r->sampleRate * 180));
+    const int n = (int) juce::jmin (r->lengthInSamples, (juce::int64) (r->sampleRate * 600));
     auto orig = std::make_shared<juce::AudioBuffer<float>> (2, n);
     juce::AudioBuffer<float> tmp ((int) juce::jmax (1u, r->numChannels), n);
     r->read (&tmp, 0, n, 0, true, true);
@@ -247,6 +411,36 @@ inline bool loadStem (Stem& s, const juce::File& f, double hostBpm)
     s.name = f.getFileNameWithoutExtension();
     s.path = f.getFullPathName();
     s.original = orig;
+    return true;
+}
+
+// A stem exactly as a Live set uses it: bar 1, tempo and region straight from the clip's warp markers
+inline bool stemFromClip (Stem& s, const live::ClipUse& u)
+{
+    if (! decodeStem (s, u.file)) return false;
+    // name: the track's name says what it is far better than "4-Audio 0001"
+    if (u.track.isNotEmpty()) s.name = u.track;
+    s.clipTrack = u.track;
+    const double tempo = 60.0 / u.secPerBeat;
+    int bars = (int) std::floor (u.beats / 4.0 + 0.02);
+    s.timing.tempo = tempo;
+    s.timing.bars = juce::jmax (1, bars);
+    s.timing.beats = s.timing.bars * 4.0;
+    s.timing.offsetSec = u.startSec;
+    s.timing.fromSet = true;
+    s.timing.shifted = false;
+    return true;
+}
+
+inline void analyseStem (Stem& s, double hostBpm, int forcedRole);
+
+// decode a file and work out its role, timing and key. If the file is used in a Live set (a stem taken
+// from inside a project), the set says exactly where bar 1 is and how fast it runs.
+inline bool loadStem (Stem& s, const juce::File& f, double hostBpm)
+{
+    live::ClipUse u;
+    if (live::useOf (f, u) && stemFromClip (s, u)) { analyseStem (s, hostBpm, -1); return true; }
+    if (! decodeStem (s, f)) return false;
     analyseStem (s, hostBpm, -1);
     return true;
 }
@@ -264,6 +458,7 @@ inline void analyseStem (Stem& s, double hostBpm, int forcedRole)
 
     // role: file name first, then the sound
     int role = forcedRole >= 0 ? forcedRole : roleFromName (s.name);
+    if (role < 0 && s.clipTrack.isNotEmpty()) role = roleFromName (juce::File (s.path).getFileNameWithoutExtension());
     if (role < 0)
     {
         cl::PitchTracker tr; tr.prepare ((float) a.sr);
@@ -282,7 +477,13 @@ inline void analyseStem (Stem& s, double hostBpm, int forcedRole)
         else role = rChords;
     }
     s.role = role;
-    s.timing = arc::analyseTiming (a, hostBpm, isDrumRole (role));
+    s.vary = defaultVary (role);
+    if (! s.timing.fromSet)
+    {
+        auto tr = stemTiming (a, hostBpm, role);
+        s.timing = tr.t;
+        s.tempoChoices = tr.choices;
+    }
     // long stems (a whole song part): start on the busiest 8 bars instead of a quiet intro
     s.cropStart = 0; s.cropBars = 0;
     if (s.timing.bars > 8)
@@ -300,8 +501,7 @@ inline void analyseStem (Stem& s, double hostBpm, int forcedRole)
     }
     s.chroma = chromaOf (src, s.fileSr);
     s.key = cl::findKey (s.chroma);
-    s.report = juce::String (s.timing.bars) + (s.timing.bars == 1 ? " bar @ " : " bars @ ") + juce::String (s.timing.tempo, 1) + " BPM"
-             + (s.timing.offsetSec > 0.005 ? ", bar 1 at " + juce::String (juce::roundToInt (s.timing.offsetSec * 1000)) + " ms" : juce::String());
+    s.report = timingReport (s.timing);
 }
 
 // Builds the playable loop for the current host tempo / sample rate and the stem's settings

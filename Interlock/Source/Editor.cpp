@@ -2,105 +2,34 @@
 
 namespace ic
 {
-    const juce::Colour bg      { 0xff12161c };
-    const juce::Colour panel   { 0xff1a2029 };
-    const juce::Colour plotBg  { 0xff0c0f14 };
-    const juce::Colour grid    { 0xff222a35 };
-    const juce::Colour text    { 0xffdfe6ee };
-    const juce::Colour dim     { 0xff8593a3 };
-    const juce::Colour kick    { 0xffff8a3d };
-    const juce::Colour bass    { 0xff3dd6ff };
-    const juce::Colour comp    { 0xffb48cff };
-    const juce::Colour curve   { 0xfff4f7fb };
+    const juce::Colour bg      = toota::cream;
+    const juce::Colour panel   = toota::cream2;
+    const juce::Colour plotBg  = toota::cream3;
+    const juce::Colour grid    = toota::ink.withAlpha (0.16f);
+    const juce::Colour text    = toota::ink;
+    const juce::Colour dim     = toota::inkSoft;
+    const juce::Colour kick    = toota::coral;
+    const juce::Colour bass    = toota::teal;
+    const juce::Colour comp    = toota::plum;
+    const juce::Colour curve   = toota::ink;
 }
 
-static juce::Font fnt (float size, bool bold = true, float kern = 0.0f)
-{
-    return juce::Font (juce::FontOptions (size).withStyle (bold ? "Bold" : "Regular")).withExtraKerningFactor (kern);
-}
+static juce::Font fnt (float size, bool bold = true, float kern = 0.0f) { return toota::font (size * 1.08f, bold ? 2 : 1, kern * 0.5f); }
 
 //==============================================================================
-ILLook::ILLook()
+void ILLook::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& c, bool hi, bool down)
 {
-    setColour (juce::BubbleComponent::backgroundColourId, juce::Colour (0xee0b0e12));
-    setColour (juce::TooltipWindow::textColourId, ic::text);
-    setColour (juce::TextButton::textColourOffId, ic::text);
-    setColour (juce::TextButton::textColourOnId, ic::text);
-}
-
-void ILLook::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider& s)
-{
-    const auto accent = s.findColour (juce::Slider::rotarySliderFillColourId);
-    const auto b = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (3.0f);
-    const float r = juce::jmin (b.getWidth(), b.getHeight()) * 0.5f;
-    const auto c = b.getCentre();
-    const float ang = a0 + pos * (a1 - a0);
-    const bool bip = (bool) s.getProperties().getWithDefault ("bipolar", false);
-
-    juce::Path track;
-    track.addCentredArc (c.x, c.y, r - 2, r - 2, 0, a0, a1, true);
-    g.setColour (ic::grid.brighter (0.2f));
-    g.strokePath (track, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    const float from = bip ? (a0 + a1) * 0.5f : a0;
-    if (std::abs (ang - from) > 0.01f)
-    {
-        juce::Path arc;
-        arc.addCentredArc (c.x, c.y, r - 2, r - 2, 0, juce::jmin (from, ang), juce::jmax (from, ang), true);
-        g.setColour (accent);
-        g.strokePath (arc, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    }
-    const float body = r - 8;
-    juce::ColourGradient grad (juce::Colour (0xff2f3946), c.x, c.y - body, juce::Colour (0xff141920), c.x, c.y + body, false);
-    g.setGradientFill (grad);
-    g.fillEllipse (c.x - body, c.y - body, body * 2, body * 2);
-    g.setColour (juce::Colours::black.withAlpha (0.6f));
-    g.drawEllipse (c.x - body, c.y - body, body * 2, body * 2, 1.0f);
-    juce::Path p;
-    p.addRoundedRectangle (-1.5f, -body + 3, 3.0f, body * 0.5f, 1.5f);
-    g.setColour (ic::text);
-    g.fillPath (p, juce::AffineTransform::rotation (ang).translated (c.x, c.y));
-}
-
-void ILLook::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool hi, bool)
-{
-    auto r = b.getLocalBounds().toFloat().reduced (1);
-    const bool on = b.getToggleState();
-    g.setColour (on ? ic::bass.withAlpha (0.18f) : ic::panel.brighter (0.05f));
-    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
-    g.setColour (on ? ic::bass : (hi ? ic::dim : ic::grid.brighter (0.4f)));
-    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
-    g.setColour (on ? ic::text : ic::dim);
-    g.setFont (fnt (11.0f, true, 0.06f));
-    g.drawText (b.getButtonText().toUpperCase(), r, juce::Justification::centred);
-}
-
-void ILLook::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hi, bool down)
-{
-    auto r = b.getLocalBounds().toFloat().reduced (1);
+    toota::Look::drawButtonBackground (g, b, c, hi, down);
     const float prog = (float) b.getProperties().getWithDefault ("progress", 0.0f);
-    g.setColour (down ? ic::kick.withAlpha (0.35f) : ic::kick.withAlpha (hi ? 0.22f : 0.14f));
-    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
     if (prog > 0.0f && prog < 1.0f)
     {
+        auto r = b.getLocalBounds().toFloat().reduced (1.0f).withTrimmedRight (2.5f).withTrimmedBottom (2.5f);
         g.saveState();
         g.reduceClipRegion (r.withWidth (r.getWidth() * prog).toNearestInt());
-        g.setColour (ic::kick.withAlpha (0.45f));
-        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+        g.setColour (toota::coral.withAlpha (0.55f));
+        g.fillRoundedRectangle (r.reduced (2), r.getHeight() * 0.5f);
         g.restoreState();
     }
-    g.setColour (ic::kick);
-    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.2f);
-}
-
-juce::Font ILLook::getTextButtonFont (juce::TextButton&, int) { return fnt (12.5f, true, 0.12f); }
-juce::Font ILLook::getSliderPopupFont (juce::Slider&) { return fnt (12.0f); }
-
-void ILLook::drawBubble (juce::Graphics& g, juce::BubbleComponent&, const juce::Point<float>&, const juce::Rectangle<float>& body)
-{
-    g.setColour (juce::Colour (0xf00b0e12));
-    g.fillRoundedRectangle (body, 4);
-    g.setColour (ic::dim);
-    g.drawRoundedRectangle (body.reduced (0.5f), 4, 1);
 }
 
 //==============================================================================
@@ -197,8 +126,7 @@ juce::Path EqDisplay::spectrumPath (std::array<std::atomic<float>, il::Analyzer:
 void EqDisplay::paint (juce::Graphics& g)
 {
     plot = getLocalBounds().toFloat().reduced (14, 10).withTrimmedBottom (14);
-    g.setColour (ic::plotBg);
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8);
+    toota::screen (g, getLocalBounds().toFloat().reduced (1), 10);
 
     // grid
     g.setFont (fnt (10.0f, false));
@@ -280,8 +208,8 @@ void EqDisplay::paint (juce::Graphics& g)
         g.fillEllipse (c.x - r * 2, c.y - r * 2, r * 4, r * 4);
         g.setColour (col);
         g.fillEllipse (c.x - r, c.y - r, r * 2, r * 2);
-        g.setColour (ic::plotBg);
-        g.drawEllipse (c.x - r, c.y - r, r * 2, r * 2, 1.5f);
+        g.setColour (toota::ink);
+        g.drawEllipse (c.x - r, c.y - r, r * 2, r * 2, 2.0f);
         g.setColour (col);
         g.setFont (fnt (10.5f, true, 0.08f));
         const float ly = c.y < plot.getCentreY() ? c.y + 14 : c.y - 34;
@@ -302,14 +230,16 @@ void EqDisplay::paint (juce::Graphics& g)
 //==============================================================================
 InterlockEditor::InterlockEditor (InterlockProcessor& p) : AudioProcessorEditor (p), proc (p), display (p)
 {
+    look.pillToggles = true;
     setLookAndFeel (&look);
     addAndMakeVisible (display);
 
     addAndMakeVisible (learnButton);
     learnButton.onClick = [this] { proc.startLearn(); };
+    learnButton.setColour (juce::TextButton::buttonColourId, toota::orange);
     learnButton.setTooltip ("Play kick and bass together; Interlock listens for ~5 seconds and sets everything up");
 
-    for (auto* t : { &monoButton, &deltaButton }) addAndMakeVisible (t);
+    for (auto* t : { &monoButton, &deltaButton }) { t->setColour (juce::ToggleButton::tickColourId, toota::teal); addAndMakeVisible (t); }
     bAtt.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (proc.apvts, ilp::monoLows, monoButton));
     bAtt.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (proc.apvts, ilp::delta, deltaButton));
     deltaButton.setTooltip ("Hear only what Interlock removes or adds");
@@ -414,18 +344,13 @@ void InterlockEditor::paint (juce::Graphics& g)
     g.addTransform (juce::AffineTransform::scale (s));
 
     // header
-    g.setColour (ic::text);
-    g.setFont (fnt (24.0f, true, 0.22f));
-    g.drawText ("INTERLOCK", 18, 10, 240, 28, juce::Justification::centredLeft);
-    g.setColour (ic::dim);
-    g.setFont (fnt (9.5f, true, 0.22f));
-    g.drawText ("KICK + BASS BALANCER   |   TOOTA AUDIO", 19, 38, 300, 12, juce::Justification::centredLeft);
+    toota::header (g, { 0, 0, 940, 56 }, "INTERLOCK", "kick + bass balancer");
     g.setFont (fnt (11.0f, false));
     g.setColour (ic::text.withAlpha (0.85f));
     g.drawText (status, 494, 14, 260, 16, juce::Justification::centredLeft, true);
 
     // sidechain status
-    const juce::Colour led = scOk ? juce::Colour (0xff4be08a) : ic::kick;
+    const juce::Colour led = scOk ? toota::teal : ic::kick;
     g.setColour (led);
     g.fillEllipse (494, 36, 8, 8);
     g.setFont (fnt (10.0f, true, 0.06f));
@@ -435,8 +360,7 @@ void InterlockEditor::paint (juce::Graphics& g)
     auto meter = [&] (int mx, const juce::String& name, float db, juce::Colour col)
     {
         const juce::Rectangle<float> r ((float) mx, 72, 18, 290);
-        g.setColour (ic::plotBg);
-        g.fillRoundedRectangle (r, 4);
+        toota::screen (g, r, 5);
         const float frac = juce::jlimit (0.0f, 1.0f, -db / 18.0f);
         g.setColour (col);
         g.fillRoundedRectangle (r.withHeight (r.getHeight() * frac), 4);
@@ -454,8 +378,7 @@ void InterlockEditor::paint (juce::Graphics& g)
     {
         const int w = gr.count * 78;
         const juce::Rectangle<float> box ((float) x, (float) y, (float) w, 130);
-        g.setColour (ic::panel);
-        g.fillRoundedRectangle (box, 8);
+        toota::panel (g, box, 12);
         g.setColour (gr.accent.withAlpha (0.9f));
         g.fillRoundedRectangle (box.withHeight (3).reduced (10, 0), 1.5f);
         g.setFont (fnt (10.0f, true, 0.18f));

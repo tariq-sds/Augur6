@@ -1,16 +1,12 @@
 #pragma once
 #include "Processor.h"
+#include "../../Common/TootaTheme.h"
 
-class ClLook : public juce::LookAndFeel_V4
+class ClLook : public toota::Look
 {
 public:
-    ClLook();
-    void drawRotarySlider (juce::Graphics&, int, int, int, int, float, float, float, juce::Slider&) override;
-    void drawToggleButton (juce::Graphics&, juce::ToggleButton&, bool, bool) override;
+    ClLook() { pillToggles = true; }
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;
-    juce::Font getTextButtonFont (juce::TextButton&, int) override;
-    void drawBubble (juce::Graphics&, juce::BubbleComponent&, const juce::Point<float>&, const juce::Rectangle<float>&) override;
-    juce::Font getSliderPopupFont (juce::Slider&) override;
 };
 
 class ClarionPanel : public juce::Component
@@ -29,6 +25,7 @@ private:
     void drawEq (juce::Graphics&, juce::Rectangle<float>);
 
     ClarionProcessor& proc;
+    toota::LookScope lookScope;
     ClLook look;
     juce::OwnedArray<juce::Slider> sliders;
     juce::OwnedArray<juce::ToggleButton> toggles;
@@ -47,7 +44,7 @@ class ClarionEditor : public juce::AudioProcessorEditor, private juce::Timer
 public:
     explicit ClarionEditor (ClarionProcessor&);
     void resized() override;
-    void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0xff0f1115)); }
+    void paint (juce::Graphics& g) override { g.fillAll (toota::cream); }
     void refreshNow() { panel.refresh(); }
 
 private:

@@ -1,13 +1,12 @@
 #pragma once
 #include "Processor.h"
+#include "../../Common/TootaTheme.h"
 
-class VariaLook : public juce::LookAndFeel_V4
+class VariaLook : public toota::Look
 {
 public:
     void drawRotarySlider (juce::Graphics&, int, int, int, int, float, float, float, juce::Slider&) override;
-    void drawBubble (juce::Graphics&, juce::BubbleComponent&, const juce::Point<float>&, const juce::Rectangle<float>&) override;
-    juce::Font getSliderPopupFont (juce::Slider&) override;
-    juce::Colour accent { 0xff1f8fc4 };
+    juce::Colour accent = toota::teal;
 };
 
 // The animated marbled texture orb
@@ -53,6 +52,7 @@ private:
     void toggleParam (const char* id);
 
     VariaProcessor& proc;
+    toota::LookScope lookScope;
     VariaLook look;
     Orb orb;
     juce::Slider textureSlider;

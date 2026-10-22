@@ -31,7 +31,8 @@ inline void renderLane (const LaneAudio& la, const LanePlan& plan, LaneState& st
     const double srcStep = (double) loopLen / loopSteps;          // samples per 16th in the prepared loop
     const double hostStep = sr * 60.0 / hostBpm / 4.0;             // samples per 16th in the song
     const float fade = (float) (0.0025 * sr);
-    const float gCoef = 1.0f - std::exp (-1.0f / (float) (0.004 * sr));
+    const float gDown = 1.0f - std::exp (-1.0f / (float) (0.004 * sr));      // fades out over ~4 ms
+    const float gUp = 1.0f - std::exp (-1.0f / (float) (0.0003 * sr));      // comes in almost instantly, so a hit on the 1 keeps its attack
     const float* s0 = la.loop.getReadPointer (0);
     const float* s1 = la.loop.getReadPointer (1);
     const int totalBars = (int) plan.bars.size();
@@ -85,7 +86,7 @@ inline void renderLane (const LaneAudio& la, const LanePlan& plan, LaneState& st
                 }
             }
         }
-        st.gain += (target - st.gain) * gCoef;
+        st.gain += (target - st.gain) * (target > st.gain ? gUp : gDown);
         if ((i & 31) == 0)
         {
             st.lpHz = st.lpHz * std::pow (lpT / st.lpHz, 0.15f);

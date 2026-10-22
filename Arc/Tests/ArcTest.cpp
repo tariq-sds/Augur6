@@ -102,7 +102,7 @@ int main()
     // ---- names -> roles
     check (roleFromName ("Kick_124") == rKick && roleFromName ("Sub Bass Am") == rBass && roleFromName ("closed hat loop") == rHats
         && roleFromName ("Clap 02") == rClap && roleFromName ("Vox chop") == rVocal && roleFromName ("Pad Chords") == rChords
-        && roleFromName ("Lead Arp") == rLead && roleFromName ("Top loop") == rTops && roleFromName ("riser") == rFx && roleFromName ("xyz") == -1,
+        && roleFromName ("Lead Arp") == rLead && roleFromName ("Top loop") == rTops && roleFromName ("riser") == rFx && roleFromName ("Metal Hit") == rPerc && roleFromName ("xyz") == -1,
            "roles from file names");
 
     // ---- stretch keeps the grid: a click every beat at 124 BPM -> 120 BPM
@@ -134,17 +134,17 @@ int main()
         check (bd.getNumSamples() == b.getNumSamples() && std::abs (hzb - wantb) < 1.5f, "bass-style transpose 110 Hz by -3: " + juce::String (hzb, 1) + " Hz (want " + juce::String (wantb, 1) + ")");
     }
 
-    // ---- the stems: 124 BPM, 4 bars, bar 1 delayed by 1.25 beats in every file (the same offset, as if exported late)
-    const double off = 1.25;
+    // ---- the stems: 124 BPM, 4 bars, bounced from bar 1 like real loops (hats and bass on the offbeat, so those files start silent)
+    const double off = 0;
     writeWav (dir.getChildFile ("Kick 124.wav"), kickLoop (off));
     writeWav (dir.getChildFile ("Hats.wav"), hatLoop (off));
     writeWav (dir.getChildFile ("Clap.wav"), clapLoop (off));
-    // bass in C minor (C, Eb, G, Bb), 8ths; chords Cm / Ab / Bb / Gm-ish
+    // offbeat bass in C minor (C, Eb, G, Bb); chords Cm / Fm / Gm / Cm
     std::vector<std::pair<int, double>> bassN, chordN;
     const int bassSeq[] { 36, 36, 48, 36, 39, 39, 43, 46 };
-    for (int b = 0; b < 16; ++b) for (int e = 0; e < 2; ++e) bassN.push_back ({ bassSeq[(b * 2 + e) % 8], b + e * 0.5 + 0.0 });
+    for (int b = 0; b < 16; ++b) bassN.push_back ({ bassSeq[b % 8], b + 0.5 });
     for (int bar = 0; bar < 4; ++bar) { static const int roots[] { 60, 65, 67, 60 }; chordN.push_back ({ roots[bar], bar * 4.0 }); }
-    writeWav (dir.getChildFile ("Bass.wav"), tonalLoop (bassN, 0.45, 1, off));
+    writeWav (dir.getChildFile ("Bass.wav"), tonalLoop (bassN, 0.4, 1, off));
     writeWav (dir.getChildFile ("Chords.wav"), tonalLoop (chordN, 3.8, 3, off));
 
     ArcProcessor proc;
@@ -159,15 +159,24 @@ int main()
     for (auto& s : st)
         std::printf ("    %-8s %-8s %s  key %s%s  transpose %d\n", roleName (s.role), s.name.toRawUTF8(), s.report.toRawUTF8(),
                      s.key.tonic >= 0 ? cl::noteName (s.key.tonic) : "-", s.key.minor ? "m" : "", s.transpose);
-    check (st.size() == 5 && std::abs (st[0].timing.tempo - SRC_BPM) < 0.6 && st[0].timing.bars == 4, "kick: 124 BPM, 4 bars");
-    check (st.size() == 5 && std::abs (st[3].timing.offsetSec - off * spb()) < 0.003, "clap: bar 1 found " + juce::String (st[3].timing.offsetSec * 1000, 1) + " ms in (true " + juce::String (off * spb() * 1000, 1) + ")");
-    for (int i : { 0, 1, 2, 4 })
-        check (st.size() == 5 && std::abs (st[(size_t) i].timing.offsetSec - off * spb()) < 0.003, juce::String (roleName (st[(size_t) i].role)) + ": same bar 1 as the clap (" + juce::String (st[(size_t) i].timing.offsetSec * 1000, 1) + " ms)");
+    bool allExact = st.size() == 5;
+    for (auto& s : st) allExact &= s.timing.bars == 4 && std::abs (s.timing.tempo - SRC_BPM) < 0.01 && s.timing.offsetSec == 0;
+    check (allExact, "every stem: exactly 4 bars at 124 BPM, bar 1 = first sample");
+    check (st.size() == 5 && st[0].vary == 0, "kick defaults to STRAIGHT");
     {
-        // a kick on its own: bar 1 can be any beat, but the beat must be exact
-        Stem k; check (loadStem (k, dir.getChildFile ("Kick 124.wav"), HOST_BPM), "kick alone loads");
-        const double inBeat = std::fmod (k.timing.offsetSec, spb()), want = std::fmod (off * spb(), spb());
-        check (std::abs (inBeat - want) < 0.003, "kick alone: beat phase " + juce::String (inBeat * 1000, 1) + " ms (true " + juce::String (want * 1000, 1) + ")");
+        // a drum loop bounced late (a pre-roll of 1.25 beats): bar 1 is found
+        auto late = kickLoop (1.25); auto cl2 = clapLoop (1.25);
+        for (size_t i = 0; i < late.size(); ++i) late[i] += cl2[i];
+        writeWav (dir.getChildFile ("Drum loop late.wav"), late);
+        Stem d; check (loadStem (d, dir.getChildFile ("Drum loop late.wav"), HOST_BPM) && d.role == rDrums, "late drum loop loads as DRUMS");
+        check (d.timing.shifted && std::abs (d.timing.offsetSec - 1.25 * spb()) < 0.004, "late drum loop: bar 1 found " + juce::String (d.timing.offsetSec * 1000, 1) + " ms in (true " + juce::String (1.25 * spb() * 1000, 1) + ")");
+        // long stems: 64 bars at 124 with Live at 120 must not be read as 62 bars at 120
+        std::vector<float> longK; for (int k = 0; k < 16; ++k) { auto l = kickLoop (0); longK.insert (longK.end(), l.begin(), l.end()); }
+        writeWav (dir.getChildFile ("Kick long.wav"), longK);
+        Stem lk; loadStem (lk, dir.getChildFile ("Kick long.wav"), HOST_BPM);
+        check (lk.timing.bars == 64 && std::abs (lk.timing.tempo - SRC_BPM) < 0.01 && lk.timing.offsetSec == 0, "64-bar kick stem: " + juce::String (lk.timing.bars) + " bars at " + juce::String (lk.timing.tempo, 2) + " BPM");
+        Stem lk2; loadStem (lk2, dir.getChildFile ("Kick long.wav"), SRC_BPM);
+        check (lk2.timing.bars == 64 && std::abs (lk2.timing.tempo - SRC_BPM) < 0.01, "same stem with Live at its own tempo: unchanged");
     }
     check (proc.globalTonic() == 0 && proc.globalMinor(), juce::String ("key detected: ") + cl::noteName (proc.globalTonic()) + (proc.globalMinor() ? " minor" : " major"));
 
@@ -182,6 +191,83 @@ int main()
         check (la.loop.getNumSamples() == expectLen && la.bpm == HOST_BPM, "kick loop stretched to 120 BPM at 48 kHz");
         check (! o.empty() && o[0] < 0.01 * HOST_SR && o.size() == 16 && worst < 0.008 * HOST_SR,
                "kick hits on every beat from bar 1 (" + juce::String ((int) o.size()) + " hits, first at " + juce::String (o.empty() ? -1.0 : o[0] / HOST_SR * 1000, 1) + " ms, worst " + juce::String (worst / HOST_SR * 1000, 1) + " ms)");
+    }
+
+
+    // ---- stems from inside a Live project: a recording with a pre-roll, used by a clip in the set
+    {
+        auto proj = dir.getChildFile ("Song Project"); proj.getChildFile ("Samples/Recorded").createDirectory();
+        // 0.889 s of pre-roll (count-in noise), then 4 bars of kick at 126 BPM, then a tail
+        const double bpm = 126, pre = 0.889;
+        std::vector<float> rec ((size_t) ((pre + 16 * 60.0 / bpm + 0.7) * SR), 0.0f);
+        for (int b = 0; b < 16; ++b)
+        {
+            const int s0 = (int) std::round ((pre + b * 60.0 / bpm) * SR);
+            for (int i = 0; i < (int) (0.35 * SR); ++i) rec[(size_t) (s0 + i)] += (float) (0.9 * std::sin (kPi2 * (52 * i / SR + 2.2 * (1 - std::exp (-i / SR / 0.03)))) * std::exp (-i / SR / 0.18));
+        }
+        auto recFile = proj.getChildFile ("Samples/Recorded/4-Audio 0001.aif");
+        writeWav (recFile.withFileExtension ("wav"), rec);
+        recFile = recFile.withFileExtension ("wav");
+        const double spbSec = 60.0 / bpm;
+        juce::String xml;
+        xml << "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Ableton><LiveSet><Tracks>"
+            << "<AudioTrack Id=\"1\"><Name><EffectiveName Value=\"Kick\"/></Name><DeviceChain><MainSequencer><ClipSlotList/><Sample><ArrangerAutomation><Events>"
+            << "<AudioClip Id=\"0\" Time=\"0\"><CurrentStart Value=\"0\"/><CurrentEnd Value=\"32\"/><Loop><LoopStart Value=\"0\"/><LoopEnd Value=\"16\"/><StartRelative Value=\"0\"/><LoopOn Value=\"true\"/></Loop>"
+            << "<IsWarped Value=\"true\"/><WarpMarkers><WarpMarker Id=\"0\" SecTime=\"" << pre << "\" BeatTime=\"0\"/><WarpMarker Id=\"1\" SecTime=\"" << (pre + 0.03125 * spbSec) << "\" BeatTime=\"0.03125\"/></WarpMarkers>"
+            << "<SampleRef><FileRef><RelativePath Value=\"Samples/Recorded/4-Audio 0001.wav\"/><Path Value=\"" << recFile.getFullPathName() << "\"/></FileRef></SampleRef></AudioClip>"
+            << "</Events></ArrangerAutomation></Sample></MainSequencer></DeviceChain></AudioTrack>"
+            << "<MidiTrack Id=\"2\"><Name><EffectiveName Value=\"Serum Bass\"/></Name></MidiTrack>"
+            << "</Tracks><MainTrack><DeviceChain><Mixer><Tempo><Manual Value=\"126\"/></Tempo></Mixer></DeviceChain></MainTrack></LiveSet></Ableton>";
+        auto als = proj.getChildFile ("Song.als");
+        {
+            als.deleteFile();
+            juce::FileOutputStream raw (als);
+            juce::GZIPCompressorOutputStream gz (raw, 9, juce::GZIPCompressorOutputStream::windowBitsGZIP);
+            gz.writeText (xml, false, false, nullptr);
+        }
+        // 1) the recording dropped on its own: Arc finds the set and uses the clip's bar 1 and tempo
+        Stem k; check (loadStem (k, recFile, 126), "project recording loads");
+        check (k.timing.fromSet && std::abs (k.timing.offsetSec - pre) < 1e-4 && std::abs (k.timing.tempo - bpm) < 0.01 && k.timing.bars == 4 && k.role == rKick && k.name == "Kick",
+               "recording synced from the Live set: bar 1 at " + juce::String (k.timing.offsetSec * 1000, 1) + " ms, " + juce::String (k.timing.tempo, 2) + " BPM, " + juce::String (k.timing.bars) + " bars, named " + k.name);
+        // 2) the whole set dropped: one lane per audio track, kick dead on the grid at 126
+        ArcProcessor p3;
+        p3.prepareToPlay (HOST_SR, 512);
+        p3.syncTempo (126, HOST_SR);
+        p3.addFiles (juce::StringArray (als.getFullPathName()));
+        waitJobs (p3);
+        check (p3.numStems() == 1 && p3.message().contains ("Serum Bass"), "Live set import: 1 audio track, MIDI track flagged (" + p3.message() + ")");
+        auto kk = p3.render (0, 0, 32);
+        auto o = onsets (kk, 0.3f);
+        const double beat = 60.0 / 126 * HOST_SR;
+        double worst = 0; for (auto x : o) worst = std::max (worst, std::abs (x - std::round (x / beat) * beat));
+        check (o.size() >= 28 && ! o.empty() && o[0] < 0.002 * HOST_SR && worst < 0.0015 * HOST_SR, "imported kick: " + juce::String ((int) o.size()) + " hits, first at " + juce::String (o.empty() ? -1.0 : o[0] / HOST_SR * 1000, 2) + " ms, worst " + juce::String (worst / HOST_SR * 1000, 2) + " ms");
+    }
+
+    // ---- optional: a real Live set (ARC_SET=/path/to/set.als)
+    if (auto* real = std::getenv ("ARC_SET"))
+    {
+        const auto set = live::read (juce::File (real));
+        std::printf ("    real set %s: %.2f BPM, %d clips\n", real, set.tempo, (int) set.clips.size());
+        ArcProcessor p4;
+        p4.prepareToPlay (HOST_SR, 512);
+        p4.syncTempo (set.tempo, HOST_SR);
+        p4.addFiles (juce::StringArray (juce::String (real)));
+        waitJobs (p4);
+        for (auto& s : p4.stems()) std::printf ("    %-8s %-14s %s  (file starts %.0f ms before bar 1)\n", roleName (s.role), s.name.toRawUTF8(), s.report.toRawUTF8(), s.timing.offsetSec * 1000);
+        std::printf ("    %s\n", p4.message().toRawUTF8());
+        auto st4 = p4.stems();
+        for (int i = 0; i < (int) st4.size(); ++i)
+            if (st4[(size_t) i].role == rKick)
+            {
+                auto kk = p4.render (i, 0, 64);
+                auto o = onsets (kk, 0.25f);
+                const double beat = 60.0 / set.tempo * HOST_SR;
+                double lo = 1e9, hi = -1e9; for (auto x : o) { const double d = x - std::round (x / beat) * beat; lo = std::min (lo, d); hi = std::max (hi, d); }
+                check (o.size() >= 60 && hi - lo < 0.001 * HOST_SR, "real kick: " + juce::String ((int) o.size()) + " hits in 16 bars, all within " + juce::String ((hi - lo) / HOST_SR * 1000, 2) + " ms of each other (" + juce::String (lo / HOST_SR * 1000, 1) + " ms after the grid, as in the recording)");
+                juce::File out ("/tmp/claude-0/real_kick.wav"); juce::WavAudioFormat wf; out.deleteFile();
+                std::unique_ptr<juce::OutputStream> os (out.createOutputStream().release());
+                if (auto w = wf.createWriterFor (os, juce::AudioFormatWriterOptions().withSampleRate (HOST_SR).withNumChannels (2).withBitsPerSample (24))) w->writeFromAudioSampleBuffer (kk, 0, kk.getNumSamples());
+            }
     }
 
     // ---- key lock: move the song to A minor, bass and chords follow (-3), drums don't
@@ -200,6 +286,7 @@ int main()
             std::printf ("   chords prepared key %s%s, transposed by hand %s%s, bass hz %.1f -> %.1f\n", cl::noteName (kb.tonic), kb.minor ? "m" : "", cl::noteName (kt.tonic), kt.minor ? "m" : "",
                          before, yinHz (transposeLoop (st[1].audio->loop, -3), 0, (int) HOST_SR, HOST_SR));
         }
+        proc.apvts.getParameter (ap::keyOn)->setValueNotifyingHost (1.0f);   // KEY LOCK is off by default (your own stems are already in key)
         auto* root = proc.apvts.getParameter (ap::root);
         root->setValueNotifyingHost (root->convertTo0to1 (9.0f));
         proc.refreshKeyForTests();
@@ -274,6 +361,25 @@ int main()
         juce::AudioBuffer<float> blk (2, 4800); proc.processBlock (blk, mb);
         check (proc.arcPos.load() > 8 && proc.arcPos.load() < 9, "section loop wraps back (" + juce::String (proc.arcPos.load(), 2) + ")");
         proc.setPlaying (false); proc.setLoop (0, 0);
+    }
+
+    // ---- the kick is dead straight: no edits in the plan, every hit on the grid through the whole song
+    {
+        auto pl = proc.plan();
+        bool clean = true; int activeBars = 0;
+        for (auto& B : pl->lanes[0].bars)
+        {
+            if (! B.on) continue;
+            ++activeBars;
+            for (int k = 0; k < 16; ++k) { const auto& op = B.steps[(size_t) k]; clean &= ! op.mute && ! op.rev && op.rep == 1 && op.span == 1 && op.gain == 1.0f && (op.src % 16) == k; }
+        }
+        check (clean && activeBars > 64, "kick plan: " + juce::String (activeBars) + " bars, all straight");
+        auto kk = proc.render (0, 0, proc.songBeats());
+        auto o = onsets (kk, 0.3f);
+        const double beat = 60.0 / HOST_BPM * HOST_SR;
+        double worst = 0;
+        for (auto x : o) worst = std::max (worst, std::abs (x - std::round (x / beat) * beat));
+        check (o.size() >= (size_t) activeBars * 4 - 2 && worst < 0.0015 * HOST_SR, "kick across the song: " + juce::String ((int) o.size()) + " hits, worst " + juce::String (worst / HOST_SR * 1000, 2) + " ms off the beat");
     }
 
     // ---- nudge: move bar 1 of the clap by one beat
@@ -396,7 +502,28 @@ int main()
         check (proc.numStems() == 12 && ms < 20000 * 0.08, "12 lanes: " + juce::String (ms / 200.0, 2) + "% of one core");
     }
 
-    // ---- editor snapshot
+    // ---- editor snapshots
+    auto snap = [] (ArcProcessor& pr, const juce::String& name, double pos)
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> ed (pr.createEditor());
+        auto* e = dynamic_cast<ArcEditor*> (ed.get());
+        e->refreshNow();
+        pr.playPpq = pos;
+        auto img = e->createComponentSnapshot (e->getLocalBounds(), true, 1.0f);
+        auto out = juce::File::getCurrentWorkingDirectory().getChildFile (name);
+        out.deleteFile();
+        juce::FileOutputStream os (out); juce::PNGImageFormat png; png.writeImageToStream (img, os);
+        return img.isValid();
+    };
+    { ArcProcessor empty; check (snap (empty, "arc_ui_empty.png", 0), "empty editor snapshot"); }
+    if (auto* real = std::getenv ("ARC_SET"))
+    {
+        ArcProcessor p5; p5.prepareToPlay (HOST_SR, 512);
+        p5.syncTempo (live::read (juce::File (real)).tempo, HOST_SR);
+        p5.addFiles (juce::StringArray (juce::String (real)));
+        waitJobs (p5);
+        check (snap (p5, "arc_ui_real.png", 4 * 40.5), "real set editor snapshot");
+    }
     {
         std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
         auto* e = dynamic_cast<ArcEditor*> (ed.get());

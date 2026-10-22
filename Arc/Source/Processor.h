@@ -57,6 +57,7 @@ public:
     void addFiles (const juce::StringArray& paths);              // background
     bool addFileSync (const juce::File& f, int role = -1);       // blocking (tests)
     void removeStem (int i);
+    void importSet (const juce::File& als);                      // a whole Live set: one lane per audio track
     void replaceStem (int i, const juce::File& f);
     std::vector<arc2::Stem> stems() const { Lock lk (mutex); return lanes; }
     int numStems() const { Lock lk (mutex); return (int) lanes.size(); }
@@ -70,6 +71,9 @@ public:
     void setMute (int i, bool);
     void setSolo (int i, bool);
     void setHold (int i, bool);
+    void setVary (int i, int amount);                           // 0 straight, 1 some, 2 lots
+    void setSourceTempo (int i, double bpm);                    // pick a different bar count / tempo for the file
+    void barOneAtStart (int i);                                 // undo any bar-1 detection: the file starts on the 1
     void dice (int i);                                          // new variations for one lane
     void generate();                                            // new variations for every lane not on HOLD
     void detectKey();                                           // sets ROOT / SCALE from the tonal stems

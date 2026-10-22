@@ -1,21 +1,12 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
+#include "../../Common/TootaTheme.h"
 
-class AugurLook : public juce::LookAndFeel_V4
+class AugurLook : public toota::Look
 {
 public:
-    AugurLook();
-    void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos,
-                           float startAngle, float endAngle, juce::Slider&) override;
     void drawToggleButton (juce::Graphics&, juce::ToggleButton&, bool highlighted, bool down) override;
-    void drawComboBox (juce::Graphics&, int w, int h, bool down, int bx, int by, int bw, int bh, juce::ComboBox&) override;
-    juce::Font getComboBoxFont (juce::ComboBox&) override;
-    void positionComboBoxText (juce::ComboBox&, juce::Label&) override;
-    void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;
-    juce::Font getTextButtonFont (juce::TextButton&, int) override;
-    void drawBubble (juce::Graphics&, juce::BubbleComponent&, const juce::Point<float>&, const juce::Rectangle<float>&) override;
-    juce::Font getSliderPopupFont (juce::Slider&) override;
 };
 
 // The full instrument panel, laid out at a fixed native size and scaled by the editor
@@ -44,6 +35,7 @@ private:
     void drawWood (juce::Graphics&, juce::Rectangle<float>);
 
     Augur6Processor& proc;
+    toota::LookScope lookScope;
     AugurLook look;
 
     juce::OwnedArray<juce::Slider> sliders;

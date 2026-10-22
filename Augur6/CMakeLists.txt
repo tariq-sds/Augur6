@@ -22,6 +22,14 @@ FetchContent_Declare(JUCE
     GIT_SHALLOW    ON)
 FetchContent_MakeAvailable(JUCE)
 
+# TOOTA brand: Fredoka type + logo, shared by every plugin
+juce_add_binary_data(TootaAssets HEADER_NAME TootaAssets.h NAMESPACE TootaAssets SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Assets/FredokaBold.ttf
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Assets/FredokaSemiBold.ttf
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Assets/FredokaMedium.ttf
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Common/Assets/tootalogo.png)
+set_target_properties(TootaAssets PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 if(APPLE)
     set(AUGUR_FORMATS VST3 AU)
 else()
@@ -76,3 +84,9 @@ if(AUGUR_BUILD_TESTS)
         juce::juce_audio_utils juce::juce_dsp juce::juce_audio_formats
         juce::juce_recommended_config_flags)
 endif()
+
+foreach(t Augur6 AugurRenderTest)
+    if(TARGET ${t})
+        target_link_libraries(${t} PRIVATE TootaAssets)
+    endif()
+endforeach()

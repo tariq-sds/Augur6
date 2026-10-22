@@ -15,7 +15,7 @@ ArcProcessor::ArcProcessor()
           l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { ap::variation, 2 }, "Variation", juce::NormalisableRange<float> (0, 1), 0.6f,
               juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return juce::String (juce::roundToInt (v * 100)) + "%"; })));
           l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { ap::level, 2 }, "Level", juce::NormalisableRange<float> (-30, 6), -3.0f));
-          l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ap::keyOn, 2 }, "Key Lock", true));
+          l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ap::keyOn, 2 }, "Key Lock", false));
           juce::StringArray notes; for (int i = 0; i < 12; ++i) notes.add (cl::noteName (i));
           l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ap::root, 2 }, "Root", notes, 9));
           l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ap::minor, 2 }, "Minor", true));
@@ -311,34 +311,34 @@ bool ArcProcessor::loadMidiStem (Stem& s, const juce::File& f)
 
 // Stems bounced from one session share their start. A stem whose bar 1 can't be told from its own audio
 // (a four-to-the-floor kick, hats, a bassline) takes it from a same-length drum loop or clap that can.
-static int timingAuthority (int role) { return role == rDrums ? 3 : role == rClap ? 2 : (role == rTops || role == rPerc) ? 1 : 0; }
+static int timingAuthority (int role) { return role == rDrums ? 4 : role == rClap ? 3 : (role == rTops || role == rPerc) ? 2 : role == rKick || role == rHats ? 1 : 0; }
 
 void ArcProcessor::adoptTiming (Stem& s)
 {
+    // Same-length stems were bounced together: they share a tempo, and if a drum loop showed bar 1 isn't
+    // at the file start, they share that too. Kicks, hats and basslines can't tell which beat is the 1.
     Lock lk (mutex);
-    if (s.fromMidi || s.original == nullptr) return;
+    if (s.fromMidi || s.original == nullptr || s.timing.fromSet) return;   // the Live set already said exactly
     const double dur = s.original->getNumSamples() / s.fileSr;
     auto sameLength = [dur] (const Stem& o) { return o.original != nullptr && ! o.fromMidi && std::abs (o.original->getNumSamples() / o.fileSr - dur) < 0.005; };
+    auto copyFrom = [] (Stem& to, const Stem& from)
+    {
+        to.timing.tempo = from.timing.tempo; to.timing.bars = from.timing.bars; to.timing.beats = from.timing.beats;
+        if ((from.timing.shifted || from.timing.fromSet) && ! to.timing.shifted) { to.timing.offsetSec = from.timing.offsetSec; to.timing.shifted = true; }
+        to.report = timingReport (to.timing) + (from.timing.shifted || from.timing.fromSet ? " (from " + from.name + ")" : juce::String());
+    };
     const Stem* ref = nullptr;
     for (auto& o : lanes)
         if (sameLength (o) && timingAuthority (o.role) > timingAuthority (s.role) && (ref == nullptr || timingAuthority (o.role) > timingAuthority (ref->role)))
             ref = &o;
-    if (ref != nullptr)
-    {
-        s.timing.offsetSec = ref->timing.offsetSec;
-        s.timing.tempo = ref->timing.tempo; s.timing.bars = ref->timing.bars; s.timing.beats = ref->timing.beats;
-        s.report = juce::String (s.timing.bars) + (s.timing.bars == 1 ? " bar @ " : " bars @ ") + juce::String (s.timing.tempo, 1) + " BPM, bar 1 from " + ref->name;
-        return;
-    }
-    // the other way round: a better reference just arrived, so line up the same-length stems already loaded
+    if (ref != nullptr) { copyFrom (s, *ref); return; }
     for (int i = 0; i < (int) lanes.size(); ++i)
     {
         auto& o = lanes[(size_t) i];
-        if (sameLength (o) && timingAuthority (s.role) > timingAuthority (o.role) && std::abs (o.timing.offsetSec - s.timing.offsetSec) > 0.001)
+        if (sameLength (o) && ! o.timing.fromSet && timingAuthority (s.role) > timingAuthority (o.role)
+            && (std::abs (o.timing.tempo - s.timing.tempo) > 1e-6 || (s.timing.shifted && ! o.timing.shifted)))
         {
-            o.timing.offsetSec = s.timing.offsetSec;
-            o.timing.tempo = s.timing.tempo; o.timing.bars = s.timing.bars; o.timing.beats = s.timing.beats;
-            o.report = juce::String (o.timing.bars) + (o.timing.bars == 1 ? " bar @ " : " bars @ ") + juce::String (o.timing.tempo, 1) + " BPM, bar 1 from " + s.name;
+            copyFrom (o, s);
             prepare (i);
         }
     }
@@ -388,6 +388,7 @@ void ArcProcessor::addFiles (const juce::StringArray& paths)
             addFiles (inner);
             continue;
         }
+        if (f.hasFileExtension ("als")) { importSet (f); continue; }
         ++jobs;
         pool.addJob ([this, f]
         {
@@ -408,6 +409,41 @@ void ArcProcessor::addFiles (const juce::StringArray& paths)
             ++version;
         });
     }
+}
+
+void ArcProcessor::importSet (const juce::File& als)
+{
+    ++jobs;
+    pool.addJob ([this, als]
+    {
+        const auto set = live::read (als);
+        if (! set.ok) { setMessage ("Couldn't read " + als.getFileName()); --jobs; return; }
+        // one lane per audio track: the first clip it plays in the arrangement (or its first session clip)
+        juce::StringArray done;
+        int added = 0;
+        for (auto& c : set.clips)
+        {
+            if (done.contains (c.track)) continue;
+            done.add (c.track);
+            if (numStems() >= kMaxLanes) break;
+            Stem s;
+            if (! stemFromClip (s, c)) continue;
+            analyseStem (s, hostBpm.load(), -1);
+            {
+                Lock lk (mutex);
+                undoStack.push_back ({ lanes, globalTonic(), globalMinor() ? 1 : 0, apvts.getRawParameterValue (ap::keyOn)->load() > 0.5f ? 1 : 0 });
+                redoStack.clear();
+                insertStem (std::move (s));
+            }
+            ++added;
+        }
+        juce::String msg = "Imported " + juce::String (added) + " audio tracks from " + als.getFileNameWithoutExtension()
+                         + " (" + juce::String (set.tempo, 0) + " BPM)";
+        if (! set.midiTracks.isEmpty()) msg << ". MIDI tracks need bouncing to audio first: " << set.midiTracks.joinIntoString (", ");
+        setMessage (msg);
+        --jobs;
+        ++version;
+    });
 }
 
 void ArcProcessor::removeStem (int i)
@@ -496,7 +532,14 @@ void ArcProcessor::redo()
 
 #define ARC_EDIT(body) { pushUndo(); Lock lk (mutex); if (i < 0 || i >= (int) lanes.size()) return; auto& s = lanes[(size_t) i]; body }
 
-void ArcProcessor::setRole (int i, int role) ARC_EDIT (s.role = juce::jlimit (0, kRoles - 1, role); applyKey(); rebuild();)
+void ArcProcessor::setRole (int i, int role) ARC_EDIT (s.role = juce::jlimit (0, kRoles - 1, role); s.vary = defaultVary (s.role); applyKey(); rebuild();)
+void ArcProcessor::setVary (int i, int v) ARC_EDIT (s.vary = juce::jlimit (0, 2, v); rebuild();)
+void ArcProcessor::setSourceTempo (int i, double bpm) ARC_EDIT (
+    const double dur = s.original != nullptr ? s.original->getNumSamples() / s.fileSr : 0;
+    if (dur <= 0 || bpm < 40) return;
+    s.timing.bars = juce::jmax (1, (int) std::round (dur * bpm / 240.0)); s.timing.beats = s.timing.bars * 4.0; s.timing.tempo = s.timing.bars * 240.0 / dur;
+    s.report = timingReport (s.timing); prepare (i);)
+void ArcProcessor::barOneAtStart (int i) ARC_EDIT (s.timing.offsetSec = 0; s.timing.shifted = false; s.nudge = 0; s.report = timingReport (s.timing); prepare (i);)
 void ArcProcessor::setNudge (int i, int st) ARC_EDIT (s.nudge = ((st % 64) + 64) % 64; prepare (i);)
 void ArcProcessor::setCrop (int i, int startBar, int bars) ARC_EDIT (s.cropStart = juce::jlimit (0, sourceBars (s) - 1, startBar); s.cropBars = juce::jlimit (0, 16, bars); prepare (i);)
 void ArcProcessor::setManualTranspose (int i, int semis) ARC_EDIT (s.manualTranspose = semis; applyKey(); rebuild();)
@@ -615,6 +658,11 @@ void ArcProcessor::getStateInformation (juce::MemoryBlock& dest)
             t.setProperty ("mute", s.mute, nullptr);
             t.setProperty ("solo", s.solo, nullptr);
             t.setProperty ("hold", s.hold, nullptr);
+            t.setProperty ("vary", s.vary, nullptr);
+            t.setProperty ("tempo", s.timing.tempo, nullptr);
+            t.setProperty ("bars", s.timing.bars, nullptr);
+            t.setProperty ("offset", s.timing.offsetSec, nullptr);
+            t.setProperty ("shifted", s.timing.shifted, nullptr);
             t.setProperty ("seed", (juce::int64) s.seed, nullptr);
             ls.appendChild (t, nullptr);
         }
@@ -670,8 +718,14 @@ void ArcProcessor::setStateInformation (const void* data, int size)
             s.mute = t.getProperty ("mute", false);
             s.solo = t.getProperty ("solo", false);
             s.hold = t.getProperty ("hold", false);
+            s.vary = t.getProperty ("vary", defaultVary (s.role));
+            if (t.hasProperty ("tempo"))
+            {
+                s.timing.tempo = t.getProperty ("tempo"); s.timing.bars = t.getProperty ("bars"); s.timing.beats = s.timing.bars * 4.0;
+                s.timing.offsetSec = t.getProperty ("offset"); s.timing.shifted = t.getProperty ("shifted");
+                s.report = timingReport (s.timing);
+            }
             Lock lk (mutex);
-            adoptTiming (s);
             s.uid = nextUid++;
             s.seed = (uint32_t) (juce::int64) t.getProperty ("seed", 1);
             lanes.push_back (std::move (s));     // saved order is kept as it was

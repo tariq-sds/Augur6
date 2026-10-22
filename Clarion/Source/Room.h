@@ -1,4 +1,5 @@
 #pragma once
+#include "../../Common/TootaTheme.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "VocalDSP.h"
 
@@ -56,11 +57,10 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RoomProcessor)
 };
 
-class RoomLook : public juce::LookAndFeel_V4
+class RoomLook : public toota::Look
 {
 public:
-    void drawRotarySlider (juce::Graphics&, int, int, int, int, float, float, float, juce::Slider&) override;
-    void drawToggleButton (juce::Graphics&, juce::ToggleButton&, bool, bool) override;
+    RoomLook() { pillToggles = true; setColour (juce::ToggleButton::tickColourId, toota::teal); }
 };
 
 class RoomEditor : public juce::AudioProcessorEditor, private juce::Timer
@@ -75,6 +75,7 @@ public:
 private:
     void timerCallback() override;
     RoomProcessor& proc;
+    toota::LookScope lookScope;
     RoomLook look;
     juce::OwnedArray<juce::Slider> sliders;
     juce::ToggleButton midButton { "Mid only" };

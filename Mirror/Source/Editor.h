@@ -1,16 +1,11 @@
 #pragma once
 #include "Processor.h"
+#include "../../Common/TootaTheme.h"
 
-class MirrorLook : public juce::LookAndFeel_V4
+class MirrorLook : public toota::Look
 {
 public:
-    MirrorLook();
-    void drawRotarySlider (juce::Graphics&, int, int, int, int, float, float, float, juce::Slider&) override;
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;
-    juce::Font getTextButtonFont (juce::TextButton&, int) override;
-    void drawToggleButton (juce::Graphics&, juce::ToggleButton&, bool, bool) override;
-    void drawComboBox (juce::Graphics&, int, int, bool, int, int, int, int, juce::ComboBox&) override;
-    juce::Font getComboBoxFont (juce::ComboBox&) override;
 };
 
 class MirrorEditor : public juce::AudioProcessorEditor, public juce::FileDragAndDropTarget, private juce::Timer
@@ -32,6 +27,7 @@ private:
     void paintStem (juce::Graphics&);
 
     MirrorProcessor& proc;
+    toota::LookScope lookScope;
     MirrorLook look;
     bool masterMode = true;
     juce::TextButton masterTab { "MASTER" }, stemTab { "STEM" };

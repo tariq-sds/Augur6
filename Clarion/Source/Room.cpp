@@ -165,51 +165,16 @@ juce::AudioProcessorEditor* RoomProcessor::createEditor() { return new RoomEdito
 //==============================================================================
 namespace rc
 {
-    const juce::Colour bg   { 0xff0f1115 };
-    const juce::Colour pnl  { 0xff171a20 };
-    const juce::Colour ins  { 0xff0b0d10 };
-    const juce::Colour text { 0xffe8ecf1 };
-    const juce::Colour dim  { 0xff8a93a0 };
-    const juce::Colour blue { 0xff53b8ff };
-    const juce::Colour gold { 0xffffb547 };
+    const juce::Colour bg   = toota::cream;
+    const juce::Colour pnl  = toota::cream2;
+    const juce::Colour ins  = toota::cream3;
+    const juce::Colour text = toota::ink;
+    const juce::Colour dim  = toota::inkSoft;
+    const juce::Colour blue = toota::teal;
+    const juce::Colour gold = toota::coral;
 }
 
-static juce::Font rf (float s, bool bold = true, float kern = 0) { return juce::Font (juce::FontOptions (s).withStyle (bold ? "Bold" : "Regular")).withExtraKerningFactor (kern); }
-
-void RoomLook::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider&)
-{
-    const auto b = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (2.0f);
-    const float r = juce::jmin (b.getWidth(), b.getHeight()) * 0.5f;
-    const auto c = b.getCentre();
-    const float ang = a0 + pos * (a1 - a0);
-    juce::Path track, arc;
-    track.addCentredArc (c.x, c.y, r - 2, r - 2, 0, a0, a1, true);
-    g.setColour (juce::Colour (0xff262b33));
-    g.strokePath (track, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    arc.addCentredArc (c.x, c.y, r - 2, r - 2, 0, a0, ang, true);
-    g.setColour (rc::blue);
-    g.strokePath (arc, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    const float body = r - 7;
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2c313a), c.x, c.y - body, juce::Colour (0xff121419), c.x, c.y + body, false));
-    g.fillEllipse (c.x - body, c.y - body, body * 2, body * 2);
-    juce::Path p;
-    p.addRoundedRectangle (-1.4f, -body + 3, 2.8f, body * 0.48f, 1.4f);
-    g.setColour (rc::text);
-    g.fillPath (p, juce::AffineTransform::rotation (ang).translated (c.x, c.y));
-}
-
-void RoomLook::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool, bool)
-{
-    auto r = b.getLocalBounds().toFloat().reduced (1);
-    const bool on = b.getToggleState();
-    g.setColour (on ? rc::blue.withAlpha (0.2f) : rc::ins);
-    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
-    g.setColour (on ? rc::blue : rc::dim);
-    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
-    g.setColour (on ? rc::text : rc::dim);
-    g.setFont (rf (10.5f, true, 0.08f));
-    g.drawText (b.getButtonText().toUpperCase(), r, juce::Justification::centred);
-}
+static juce::Font rf (float s, bool bold = true, float kern = 0) { return toota::font (s * 1.1f, bold ? 2 : 1, kern * 0.4f); }
 
 RoomEditor::RoomEditor (RoomProcessor& p) : AudioProcessorEditor (p), proc (p)
 {
@@ -248,27 +213,24 @@ void RoomEditor::timerCallback()
 void RoomEditor::paint (juce::Graphics& g)
 {
     g.fillAll (rc::bg);
-    g.setColour (rc::text); g.setFont (rf (22, true, 0.22f));
-    g.drawText ("CLARION ROOM", 18, 12, 300, 26, juce::Justification::centredLeft);
-    g.setColour (rc::dim); g.setFont (rf (9.5f, true, 0.18f));
-    g.drawText ("MAKES SPACE FOR THE VOCAL   |   TOOTA AUDIO", 19, 38, 400, 12, juce::Justification::centredLeft);
+    toota::header (g, { 0, 0, 620, 56 }, "CLARION ROOM", "makes space for the vocal");
     const bool v = proc.vocalPresent.load();
-    g.setColour (v ? juce::Colour (0xff7ee0a1) : rc::gold);
-    g.fillEllipse (380, 22, 8, 8);
-    g.setFont (rf (10, true, 0.06f));
-    g.drawText (v ? "VOCAL SIDECHAIN: ACTIVE" : "SIDECHAIN: ROUTE THE VOCAL HERE", 394, 18, 220, 16, juce::Justification::centredLeft);
+    g.setColour (v ? toota::teal : rc::gold);
+    g.fillEllipse (16, 340, 8, 8);
+    g.setColour (rc::text); g.setFont (rf (10, true, 0.06f));
+    g.drawText (v ? "VOCAL SIDECHAIN: ACTIVE" : "SIDECHAIN: ROUTE THE VOCAL HERE", 30, 335, 300, 16, juce::Justification::centredLeft);
 
-    auto area = juce::Rectangle<float> (16, 64, 588, 176);
-    g.setColour (rc::pnl); g.fillRoundedRectangle (area, 8);
+    auto area = juce::Rectangle<float> (16, 68, 588, 172);
+    toota::panel (g, area, 12);
     const float focus = proc.apvts.getRawParameterValue (rp::focus)->load();
     const float bw = (area.getWidth() - 40) / RoomProcessor::kBands;
     for (int b = 0; b < RoomProcessor::kBands; ++b)
     {
         auto bar = juce::Rectangle<float> (area.getX() + 20 + b * bw + 14, area.getY() + 26, bw - 28, area.getHeight() - 60);
-        g.setColour (rc::ins); g.fillRoundedRectangle (bar, 4);
+        toota::screen (g, bar, 6);
         const float fr = juce::jlimit (0.0f, 1.0f, shown[(size_t) b] / 12.0f);
-        g.setGradientFill (juce::ColourGradient (rc::blue, 0, bar.getY(), rc::blue.withAlpha (0.4f), 0, bar.getBottom(), false));
-        g.fillRoundedRectangle (bar.withHeight (bar.getHeight() * fr), 4);
+        g.setColour (rc::blue);
+        g.fillRoundedRectangle (bar.reduced (2.5f).withHeight ((bar.getHeight() - 5) * fr), 4);
         g.setColour (rc::text); g.setFont (rf (10, true));
         const float hz = RoomProcessor::kCentres[b] * focus;
         g.drawText (hz >= 1000 ? juce::String (hz / 1000.0f, 1) + "k" : juce::String (juce::roundToInt (hz)), bar.withY (bar.getBottom() + 6).withHeight (12).toNearestInt(), juce::Justification::centred);
@@ -280,7 +242,8 @@ void RoomEditor::paint (juce::Graphics& g)
 
     const char* names[] { "DEPTH", "FOCUS", "WIDTH", "RELEASE", "OUTPUT" };
     g.setFont (rf (9, true, 0.1f));
-    for (int i = 0; i < 5; ++i) g.drawText (names[i], 8 + i * 96, 330, 96, 12, juce::Justification::centred);
+    g.setColour (rc::text);
+    for (int i = 0; i < 5; ++i) g.drawText (names[i], 8 + i * 96, 318, 96, 14, juce::Justification::centred);
 }
 
 #if ! ROOM_NO_FACTORY

@@ -1,16 +1,11 @@
 #pragma once
 #include "Processor.h"
+#include "../../Common/TootaTheme.h"
 
-class ILLook : public juce::LookAndFeel_V4
+class ILLook : public toota::Look
 {
 public:
-    ILLook();
-    void drawRotarySlider (juce::Graphics&, int, int, int, int, float, float, float, juce::Slider&) override;
-    void drawToggleButton (juce::Graphics&, juce::ToggleButton&, bool, bool) override;
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;
-    juce::Font getTextButtonFont (juce::TextButton&, int) override;
-    void drawBubble (juce::Graphics&, juce::BubbleComponent&, const juce::Point<float>&, const juce::Rectangle<float>&) override;
-    juce::Font getSliderPopupFont (juce::Slider&) override;
 };
 
 class EqDisplay : public juce::Component
@@ -55,6 +50,7 @@ private:
     void knob (const char* id, const juce::String& label, juce::Colour accent);
 
     InterlockProcessor& proc;
+    toota::LookScope lookScope;
     ILLook look;
     EqDisplay display;
     juce::TextButton learnButton;
