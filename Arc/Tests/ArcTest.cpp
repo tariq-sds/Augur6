@@ -142,6 +142,61 @@ int main (int argc, char** argv)
     score ("Lead", lead, p.lane (arc::laneLead).loop, 0.9f);
     check (std::abs (p.lane (arc::laneBass).loop.lengthBeats - 8.0) < 1e-6 && std::abs (p.lane (arc::laneChords).loop.lengthBeats - 16.0) < 1e-6, "loop lengths read as 2 and 4 bars");
 
+    // ---- loops that don't start on the 1 (pre-roll / sample start offset) and loops at another tempo
+    {
+        auto rot = [] (std::vector<float> x, double beats) { const int k = (int) (beats * spb() * SR); std::rotate (x.begin(), x.begin() + k, x.end()); return x; };
+        writeWav (dir.getChildFile ("drums_offset.wav"), rot (renderDrums (drums), 1.25));   // file starts a beat and a 16th late
+        writeWav (dir.getChildFile ("bass_offset.wav"), rot (renderTonal (bass, true), 2.5));
+        ArcProcessor q; q.setPlayHead (&head); q.prepareToPlay (SR, 512);
+        { juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m; q.processBlock (b, m); }
+        q.loadFileSync (arc::laneDrums, dir.getChildFile ("drums_offset.wav"));
+        q.loadFileSync (arc::laneBass, dir.getChildFile ("bass_offset.wav"));
+        std::printf ("  offset drums: %s\n  offset bass: %s\n", q.lane (0).report.toRawUTF8(), q.lane (1).report.toRawUTF8());
+        {
+            // a 4-on-the-floor loop is symmetric every 2 beats; the beat grid must be right, the bar start is
+            // scored over the half-bar rotations (and can be dragged by hand in the UI)
+            arc::Clip best; float bestF = -1;
+            for (double rotBeats : { 0.0, 2.0, 4.0, 6.0 })
+            {
+                arc::Clip c = q.lane (arc::laneDrums).loop;
+                for (auto& n : c.notes) n.start = arc::wrapBeat (n.start + rotBeats, c.lengthBeats);
+                int hit = 0; for (auto& t : drums.notes) for (auto& g : c.notes) if (g.pitch == t.pitch && std::abs (g.start - t.start) < 0.13) { ++hit; break; }
+                if (hit > bestF) { bestF = (float) hit; best = c; }
+            }
+            score ("Drums*", drums, best, 0.9f);
+        }
+        check (! q.lane (arc::laneDrums).loop.empty() && arc::isKick (q.lane (arc::laneDrums).loop.notes.front().pitch) && q.lane (arc::laneDrums).loop.notes.front().start < 1e-6, "offset drum loop: bar 1 found (kick on the 1)");
+        // the bass has no drums to lean on: judge it against the truth rotated to its own downbeat guess
+        // at 120 BPM (host 124): tempo must be found from the hits
+        std::vector<float> slow;
+        {
+            arc::Clip d (drums);
+            const double r = 120.0 / 124.0;
+            std::vector<float> x ((size_t) (d.lengthBeats * 60.0 / 120.0 * SR) + 1, 0.0f);
+            auto fast = renderDrums (d);
+            for (size_t i = 0; i < x.size(); ++i) { const double src = i * r; const size_t i0 = (size_t) src; if (i0 + 1 < fast.size()) x[i] = fast[i0] + (float) (src - i0) * (fast[i0 + 1] - fast[i0]); }
+            slow = rot (x, 0.0);
+        }
+        writeWav (dir.getChildFile ("drums_120.wav"), slow);
+        q.loadFileSync (arc::laneDrums, dir.getChildFile ("drums_120.wav"));
+        std::printf ("  120 BPM drums: %s\n", q.lane (0).report.toRawUTF8());
+        score ("Drums120", drums, q.lane (arc::laneDrums).loop, 0.85f);
+    }
+
+    // ---- Arc's own transport: play from a clicked position, loop a section
+    {
+        ArcProcessor q; q.setPlayHead (&head); q.prepareToPlay (SR, 512);
+        head.play = false;
+        q.loadFileSync (arc::laneDrums, dir.getChildFile ("drums.wav"));
+        q.setPosition (64.0); q.setLoop (64.0, 72.0); q.setPlaying (true);
+        juce::AudioBuffer<float> b (2, 512); juce::MidiBuffer m; double e = 0; double maxPos = 0;
+        for (int k = 0; k < 900; ++k) { b.clear(); q.processBlock (b, m); maxPos = std::max (maxPos, q.playPpq.load()); for (int i = 0; i < 512; ++i) e += b.getSample (0, i) * b.getSample (0, i); }
+        std::printf ("  internal transport: position %.2f, max %.2f, energy %.1f\n", q.playPpq.load(), maxPos, e);
+        check (e > 1.0 && maxPos < 72.01 && q.playPpq.load() >= 64.0, "Arc plays from the clicked bar and loops the section without Live");
+        q.nudgeLane (arc::laneDrums, 2);
+        check (std::abs (q.lane (0).loop.notes.front().start) < 1e-6 && q.lane (0).nudge == 2, "dragging a lane's loop moves bar 1 by 16ths");
+    }
+
     // ---- automatic lane guess from audio
     {
         ArcProcessor q; q.setPlayHead (&head); q.prepareToPlay (SR, 512);

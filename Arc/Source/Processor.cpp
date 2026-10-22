@@ -58,11 +58,25 @@ void ArcProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
             if (auto b = pos->getBpm()) bpm = *b;
             if (auto q = pos->getPpqPosition()) ppq = *q;
         }
-    hostBpm = bpm; playPpq = ppq; playing = isPlaying;
+    hostBpm = bpm;
+    // follow Live while it plays; otherwise run Arc's own transport (Play button / click to locate)
+    double pos = ppq;
+    bool run = isPlaying;
+    if (isPlaying) arcPos = ppq;
+    else if (arcPlaying.load())
+    {
+        pos = arcPos.load();
+        const double le = loopEnd.load(), ls = loopStart.load();
+        if (le > ls && pos >= le) pos = ls + std::fmod (pos - ls, le - ls);
+        arcPos = pos + n * bpm / 60.0 / sr;
+        run = true;
+    }
+    playPpq = run ? pos : arcPos.load();
+    playing = run;
     if (apvts.getRawParameterValue (ap::preview)->load() > 0.5f)
     {
         auto a = std::atomic_load (&arr);
-        if (a) preview.render (buffer.getWritePointer (0), buffer.getWritePointer (1), n, *a, ppq, bpm, isPlaying,
+        if (a) preview.render (buffer.getWritePointer (0), buffer.getWritePointer (1), n, *a, pos, bpm, run,
                                juce::Decibels::decibelsToGain (apvts.getRawParameterValue (ap::level)->load()));
     }
 }
@@ -92,7 +106,7 @@ void ArcProcessor::convert (int laneIn, const juce::File& f)
         if (! a.ok) src.report = "Could not read that audio file";
         else
         {
-            const auto tm = arc::timingFor ((double) a.mono.size() / a.sr, hostBpm.load());
+            
             if (lane < 0)
             {
                 // guess: noisy/percussive -> drums; pitched and low -> bass; pitched -> lead; else chords
@@ -107,13 +121,16 @@ void ArcProcessor::convert (int laneIn, const juce::File& f)
                 else if (vf > 0.6f && periodic > 0.8f) lane = arc::laneLead;
                 else lane = arc::laneChords;
             }
+            // only drum loops get a downbeat search: tonal stems (offbeat basslines!) are trusted to start on the 1
+            const auto tm = arc::analyseTiming (a, hostBpm.load(), lane == arc::laneDrums);
             juce::String rep;
             if (lane == arc::laneDrums) src.loop = arc::drumsToMidi (a, tm, &rep);
             else if (lane == arc::laneChords) src.loop = arc::polyToMidi (a, tm, &rep);
             else src.loop = arc::monoToMidi (a, tm, &rep);
             src.fromAudio = true;
             src.tempo = tm.tempo;
-            src.report = rep + ", " + juce::String (tm.bars) + " bars @ " + juce::String (tm.tempo, 1) + " BPM (from audio)";
+            src.report = rep + ", " + juce::String (tm.bars) + " bars @ " + juce::String (tm.tempo, 1) + " BPM"
+                       + (tm.offsetSec > 0.005 ? ", bar 1 found " + juce::String (juce::roundToInt (tm.offsetSec * 1000)) + " ms in" : juce::String());
         }
     }
     {
@@ -135,6 +152,20 @@ void ArcProcessor::loadFileSync (int lane, const juce::File& f) { busyLane = lan
 void ArcProcessor::clearLane (int lane)
 {
     { std::lock_guard<std::mutex> lk (mutex); lanes[(size_t) lane] = LaneSource(); }
+    regenerate (false);
+}
+
+void ArcProcessor::nudgeLane (int lane, int steps)
+{
+    {
+        std::lock_guard<std::mutex> lk (mutex);
+        auto& L = lanes[(size_t) lane];
+        if (L.loop.empty() || steps == 0) return;
+        const double len = L.loop.lengthBeats, d = steps * 0.25;
+        for (auto& nt : L.loop.notes) { nt.start = std::fmod (nt.start - d, len); if (nt.start < 0) nt.start += len; }
+        L.loop.sort();
+        L.nudge += steps;
+    }
     regenerate (false);
 }
 
@@ -195,6 +226,7 @@ void ArcProcessor::getStateInformation (juce::MemoryBlock& dest)
             t.setProperty ("report", lanes[(size_t) l].report, nullptr);
             t.setProperty ("len", lanes[(size_t) l].loop.lengthBeats, nullptr);
             t.setProperty ("audio", lanes[(size_t) l].fromAudio, nullptr);
+            t.setProperty ("nudge", lanes[(size_t) l].nudge, nullptr);
             juce::String notes;
             for (auto& n : lanes[(size_t) l].loop.notes)
                 notes << n.pitch << "," << n.start << "," << n.length << "," << n.velocity << ";";
@@ -225,6 +257,7 @@ void ArcProcessor::setStateInformation (const void* data, int size)
                     s.source = t.getProperty ("src").toString();
                     s.report = t.getProperty ("report").toString();
                     s.fromAudio = (bool) t.getProperty ("audio", false);
+                    s.nudge = (int) t.getProperty ("nudge", 0);
                     s.loop.lengthBeats = (double) t.getProperty ("len", 4.0);
                     for (auto& tok : juce::StringArray::fromTokens (t.getProperty ("notes").toString(), ";", ""))
                     {

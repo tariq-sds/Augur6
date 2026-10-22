@@ -99,6 +99,10 @@ ArcEditor::ArcEditor (ArcProcessor& p) : AudioProcessorEditor (p), proc (p)
     exportButton.onClick = [this] { auto files = proc.exportAll(); if (! files.isEmpty()) files[0].getParentDirectory().startAsProcess(); };
     folderButton.onClick = [this] { proc.exportFolder().startAsProcess(); };
 
+    playButton.setColour (juce::TextButton::buttonOnColourId, ac::acc);
+    playButton.setTooltip ("Play Arc's preview from the playhead (Space in Live still drives it when Live is playing)");
+    playButton.onClick = [this] { proc.setPlaying (! proc.arcPlaying.load()); };
+    addAndMakeVisible (playButton);
     previewToggle.setColour (juce::ToggleButton::tickColourId, ac::acc);
     addAndMakeVisible (previewToggle);
     bAtt.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (proc.apvts, ap::preview, previewToggle));
@@ -140,7 +144,8 @@ void ArcEditor::resized()
     exportButton.setBounds (790, 18, 100, 26);
     folderButton.setBounds (898, 18, 92, 26);
     levelKnob.setBounds (1060, 10, 42, 42);
-    previewToggle.setBounds (16, 58, 270, 22);
+    previewToggle.setBounds (16, 58, 230, 22);
+    playButton.setBounds (312, 54, 70, 24);
     for (int l = 0; l < arc::kNumLanes; ++l)
     {
         auto r = laneRow (l);
@@ -172,21 +177,116 @@ void ArcEditor::filesDropped (const juce::StringArray& files, int x, int y)
     else for (auto& f : files) proc.loadFile (-1, juce::File (f));   // several at once: each goes to the lane it sounds like
 }
 
+float ArcEditor::xOfBeat (double beat) const
+{
+    auto a = proc.arrangement();
+    const double total = juce::jmax (4.0, (a ? a->totalBars : 1) * 4.0);
+    const double span = viewBeats > 0 ? viewBeats : total;
+    return 312.0f + (float) ((beat - viewStart) / span) * 784.0f;
+}
+
+double ArcEditor::beatOfX (float x) const
+{
+    auto a = proc.arrangement();
+    const double total = juce::jmax (4.0, (a ? a->totalBars : 1) * 4.0);
+    const double span = viewBeats > 0 ? viewBeats : total;
+    return juce::jlimit (0.0, total, viewStart + (x - 312.0) / 784.0 * span);
+}
+
 void ArcEditor::mouseDown (const juce::MouseEvent& e)
 {
-    dragLane = -1; dragStarted = false;
-    for (int l = 0; l < arc::kNumLanes; ++l) if (dragHandle (l).contains (e.getPosition())) dragLane = l;
+    dragLane = -1; dragStarted = false; nudgeLane = -1; nudgeApplied = 0; scrubbing = false;
+    const auto p = e.getPosition();
+    for (int l = 0; l < arc::kNumLanes; ++l)
+    {
+        if (dragHandle (l).contains (p)) dragLane = l;
+        if (loopView (l).contains (p) && ! proc.lane (l).loop.empty()) nudgeLane = l;
+    }
+    if (dragLane < 0 && nudgeLane < 0 && timelineArea().contains (p))
+    {
+        // click a section name to jump to it; anywhere else to put the playhead there
+        auto a = proc.arrangement();
+        double target = beatOfX ((float) p.x);
+        if (a && p.y >= 86 && p.y <= 110)
+        {
+            for (auto& sct : a->sections)
+                if (target >= sct.startBar * 4.0 && target < (sct.startBar + sct.bars) * 4.0) { target = sct.startBar * 4.0; break; }
+        }
+        else
+        {
+            target = std::floor (target * 4.0 + 0.5) / 4.0;     // snap to the 16th
+        }
+        proc.setPosition (target);
+        scrubbing = true;
+        repaint();
+    }
 }
 
 void ArcEditor::mouseDrag (const juce::MouseEvent& e)
 {
+    if (scrubbing) { proc.setPosition (std::floor (beatOfX ((float) e.position.x) * 4.0 + 0.5) / 4.0); repaint(); return; }
+    if (nudgeLane >= 0)
+    {
+        // drag the loop left/right in 16ths to choose which hit is the "1"
+        const auto lp = proc.lane (nudgeLane);
+        const double stepPx = (double) loopView (nudgeLane).getWidth() / juce::jmax (1.0, lp.loop.lengthBeats * 4.0);
+        const int want = (int) std::round (-e.getDistanceFromDragStartX() / stepPx);
+        if (want != nudgeApplied) { proc.nudgeLane (nudgeLane, want - nudgeApplied); nudgeApplied = want; }
+        return;
+    }
     if (dragLane < 0 || dragStarted || e.getDistanceFromDragStart() < 6) return;
     dragStarted = true;
     auto f = proc.exportLane (dragLane);
     if (f.existsAsFile()) juce::DragAndDropContainer::performExternalDragDropOfFiles ({ f.getFullPathName() }, false, this);
 }
 
-void ArcEditor::timerCallback() { repaint(); }
+void ArcEditor::mouseUp (const juce::MouseEvent&) { scrubbing = false; nudgeLane = -1; }
+
+void ArcEditor::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    const auto p = e.getPosition();
+    for (int l = 0; l < arc::kNumLanes; ++l)
+        if (loopView (l).contains (p)) { const int back = -proc.lane (l).nudge; if (back != 0) proc.nudgeLane (l, back); return; }   // reset the start
+    if (! timelineArea().contains (p)) return;
+    // double-click a section: loop it (double-click again to stop looping)
+    auto a = proc.arrangement();
+    if (! a) return;
+    const double b = beatOfX ((float) p.x);
+    for (auto& sct : a->sections)
+        if (b >= sct.startBar * 4.0 && b < (sct.startBar + sct.bars) * 4.0)
+        {
+            const double s0 = sct.startBar * 4.0, s1 = (sct.startBar + sct.bars) * 4.0;
+            if (proc.loopEnd.load() == s1 && proc.loopStart.load() == s0) proc.setLoop (0, 0);
+            else { proc.setLoop (s0, s1); proc.setPosition (s0); }
+        }
+    repaint();
+}
+
+void ArcEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    if (! timelineArea().contains (e.getPosition())) return;
+    auto a = proc.arrangement();
+    const double total = juce::jmax (4.0, (a ? a->totalBars : 1) * 4.0);
+    double span = viewBeats > 0 ? viewBeats : total;
+    if (std::abs (w.deltaX) > std::abs (w.deltaY))
+        viewStart -= w.deltaX * span * 0.5;                                  // sideways = scroll
+    else
+    {
+        const double anchor = beatOfX (e.position.x);                         // zoom around the mouse
+        span = juce::jlimit (16.0, total, span * (w.deltaY > 0 ? 0.8 : 1.25));
+        viewStart = anchor - (e.position.x - 312.0) / 784.0 * span;
+    }
+    viewBeats = span >= total - 1e-6 ? 0 : span;
+    viewStart = juce::jlimit (0.0, juce::jmax (0.0, total - span), viewStart);
+    if (viewBeats == 0) viewStart = 0;
+    repaint();
+}
+
+void ArcEditor::timerCallback()
+{
+    playButton.setButtonText (proc.arcPlaying.load() ? "STOP" : "PLAY");
+    repaint();
+}
 
 void ArcEditor::drawLaneInfo (juce::Graphics& g, int l, const arc::Arrangement& a)
 {
@@ -204,8 +304,31 @@ void ArcEditor::drawLaneInfo (juce::Graphics& g, int l, const arc::Arrangement& 
     else if (src.source.isEmpty()) { g.setColour (ac::dim); g.drawText ("Drop a MIDI clip or an audio loop here", r.getX() + 14, r.getY() + 28, 270, 14, juce::Justification::centredLeft); }
     else
     {
-        g.setColour (ac::text); g.drawText (src.source, r.getX() + 14, r.getY() + 28, 270, 14, juce::Justification::centredLeft, true);
-        g.setColour (ac::dim); g.drawText (src.report, r.getX() + 14, r.getY() + 44, 270, 14, juce::Justification::centredLeft, true);
+        g.setColour (ac::text); g.drawText (src.source + "  ", r.getX() + 14, r.getY() + 26, 270, 14, juce::Justification::centredLeft, true);
+        g.setColour (ac::dim); g.setFont (af (9.5f, false));
+        g.drawText (src.report, r.getX() + 120, r.getY() + 8, 166, 14, juce::Justification::centredRight, true);
+        // the loop itself: drag sideways to choose which hit is bar 1, double-click to reset
+        auto lv = loopView (l).toFloat();
+        g.setColour (ac::inset); g.fillRoundedRectangle (lv, 3);
+        const double len = juce::jmax (1.0, src.loop.lengthBeats);
+        for (int b = 0; b <= (int) len; ++b)
+        {
+            const float x = lv.getX() + (float) (b / len) * lv.getWidth();
+            g.setColour (b % 4 == 0 ? ac::dim.withAlpha (0.6f) : ac::line);
+            g.drawVerticalLine ((int) x, lv.getY(), lv.getBottom());
+        }
+        int lo = 127, hi = 0;
+        for (auto& n : src.loop.notes) { lo = juce::jmin (lo, n.pitch); hi = juce::jmax (hi, n.pitch); }
+        for (auto& n : src.loop.notes)
+        {
+            const float x = lv.getX() + (float) (n.start / len) * lv.getWidth();
+            const float w = juce::jmax (2.0f, (float) (n.length / len) * lv.getWidth());
+            const float y = hi > lo ? lv.getBottom() - 3 - (lv.getHeight() - 6) * (float) (n.pitch - lo) / (float) (hi - lo) : lv.getCentreY();
+            g.setColour (col.withAlpha (0.4f + 0.6f * n.velocity)); g.fillRect (x, y - 1, l == arc::laneDrums ? 2.0f : w, 2.0f);
+        }
+        g.setColour (ac::acc); g.fillRect (lv.getX(), lv.getY(), 2.0f, lv.getHeight());
+        g.setFont (af (8, true)); g.drawText ("1", (int) lv.getX() + 4, (int) lv.getY() + 1, 10, 9, juce::Justification::left);
+        if (src.nudge != 0) { g.setColour (ac::dim); g.drawText ((src.nudge > 0 ? "+" : "") + juce::String (src.nudge) + "/16", (int) lv.getRight() - 40, (int) lv.getY() + 1, 38, 9, juce::Justification::right); }
     }
     auto h = dragHandle (l).toFloat();
     const bool has = ! a.lanes[(size_t) l].empty();
@@ -219,7 +342,9 @@ void ArcEditor::drawTimeline (juce::Graphics& g, const arc::Arrangement& a)
 {
     const float x0 = 312, x1 = 1096;
     const int bars = juce::jmax (1, a.totalBars);
-    auto xOf = [&] (double beat) { return x0 + (float) (beat / (bars * 4.0)) * (x1 - x0); };
+    auto xOf = [&] (double beat) { return xOfBeat (beat); };
+    g.saveState();
+    g.reduceClipRegion (juce::Rectangle<int> ((int) x0, 66, (int) (x1 - x0), laneRow (3).getBottom() - 60));
 
     // sections
     for (auto& s : a.sections)
@@ -262,14 +387,27 @@ void ArcEditor::drawTimeline (juce::Graphics& g, const arc::Arrangement& a)
             if (x - lastX > 64) { g.drawText (t.text, (int) x + 4, (int) lr.getY() + 3, 100, 12, juce::Justification::centredLeft, true); lastX = x; }
         }
     }
-    // bar ruler + playhead
+    // loop region, bar ruler, playhead
+    if (proc.loopEnd.load() > proc.loopStart.load())
+    {
+        const float la = xOf (proc.loopStart.load()), lb = xOf (proc.loopEnd.load());
+        g.setColour (ac::acc.withAlpha (0.12f)); g.fillRect (la, 70.0f, lb - la, 14.0f);
+        g.setColour (ac::acc); g.drawRect (la, 70.0f, lb - la, 14.0f, 1.0f);
+    }
+    const double span = viewBeats > 0 ? viewBeats / 4.0 : bars;
+    const int every = span > 96 ? 16 : span > 48 ? 8 : span > 16 ? 4 : 1;
     g.setColour (ac::dim); g.setFont (af (8.5f, false));
-    for (int b = 0; b <= bars; b += 16) g.drawText (juce::String (b + 1), (int) xOf (b * 4.0) - 12, 72, 24, 12, juce::Justification::centred);
-    if (proc.playing.load())
+    for (int b = 0; b <= bars; b += every) g.drawText (juce::String (b + 1), (int) xOf (b * 4.0) - 12, 72, 24, 12, juce::Justification::centred);
     {
         const float x = xOf (proc.playPpq.load());
-        if (x >= x0 && x <= x1) { g.setColour (ac::acc); g.drawVerticalLine ((int) x, 84, (float) laneRow (3).getBottom()); }
+        if (x >= x0 && x <= x1)
+        {
+            g.setColour (proc.playing.load() ? ac::acc : ac::acc.withAlpha (0.6f));
+            g.drawVerticalLine ((int) x, 70, (float) laneRow (3).getBottom());
+            juce::Path tri; tri.addTriangle (x - 5, 70, x + 5, 70, x, 78); g.fillPath (tri);
+        }
     }
+    g.restoreState();
 }
 
 void ArcEditor::paint (juce::Graphics& g)
@@ -281,6 +419,17 @@ void ArcEditor::paint (juce::Graphics& g)
     g.setColour (ac::dim); g.setFont (af (9.5f, true, 0.2f));
     g.drawText ("LOOP TO FULL TRACK   |   TOOTA AUDIO", 17, 42, 280, 12, juce::Justification::centredLeft);
     g.drawText ("VARIATION", 540, 54, 80, 12, juce::Justification::centred);
+    {
+        const double pos = proc.playPpq.load();
+        const int bar = (int) (pos / 4.0) + 1, beat = (int) std::fmod (pos, 4.0) + 1;
+        g.setColour (ac::text); g.setFont (af (12, true));
+        g.drawText (juce::String (bar) + "." + juce::String (beat), 390, 58, 60, 18, juce::Justification::centredLeft);
+        if (proc.loopEnd.load() > proc.loopStart.load())
+        {
+            g.setColour (ac::acc); g.setFont (af (9, true));
+            g.drawText ("LOOPING", 440, 60, 60, 14, juce::Justification::centredLeft);
+        }
+    }
     g.drawText ("PREVIEW", 1041, 54, 80, 12, juce::Justification::centred);
     if (a)
     {
@@ -296,6 +445,8 @@ void ArcEditor::paint (juce::Graphics& g)
         g.setColour (ac::panel); g.fillRoundedRectangle (t, 8);
         g.setColour (ac::dim); g.setFont (af (9, true, 0.15f));
         g.drawText ("NOTES", (int) t.getX() + 14, (int) t.getY() + 8, 200, 12, juce::Justification::centredLeft);
+        g.drawText ("CLICK THE TIMELINE TO MOVE   |   DOUBLE-CLICK A SECTION TO LOOP IT   |   SCROLL TO ZOOM   |   DRAG A LANE'S LOOP TO SET BAR 1",
+                    (int) t.getRight() - 760, (int) t.getY() + 8, 746, 12, juce::Justification::centredRight);
         g.setColour (ac::text); g.setFont (af (11.5f, false));
         int y = (int) t.getY() + 26;
         if (a->tips.empty()) g.drawText ("Drop loops onto the lanes (MIDI or audio). Arc builds the full track; drag each lane into Live.", (int) t.getX() + 14, y, 1060, 16, juce::Justification::centredLeft);

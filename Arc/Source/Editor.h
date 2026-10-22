@@ -26,6 +26,9 @@ public:
     void filesDropped (const juce::StringArray&, int, int) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     void refreshNow() { timerCallback(); }
 
     static constexpr int W = 1120, H = 720;
@@ -35,6 +38,10 @@ private:
     int laneAt (juce::Point<int>) const;
     juce::Rectangle<int> laneRow (int l) const { return { 16, 116 + l * 112, 1088, 104 }; }
     juce::Rectangle<int> dragHandle (int l) const { auto r = laneRow (l); return { r.getX() + 196, r.getY() + 70, 84, 26 }; }
+    juce::Rectangle<int> loopView (int l) const { auto r = laneRow (l); return { r.getX() + 14, r.getY() + 44, 266, 20 }; }
+    juce::Rectangle<int> timelineArea() const { return { 312, 70, 784, laneRow (3).getBottom() - 70 }; }
+    float xOfBeat (double beat) const;
+    double beatOfX (float x) const;
     void drawLaneInfo (juce::Graphics&, int l, const arc::Arrangement&);
     void drawTimeline (juce::Graphics&, const arc::Arrangement&);
 
@@ -42,13 +49,16 @@ private:
     ArcLook look;
     juce::ComboBox styleBox;
     juce::Slider variationKnob, levelKnob;
+    juce::TextButton playButton { "PLAY" };
     juce::TextButton regenButton { "NEW VARIATIONS" }, exportButton { "EXPORT ALL" }, folderButton { "SHOW FILES" }, loadButtons[arc::kNumLanes], clearButtons[arc::kNumLanes];
     juce::ToggleButton previewToggle { "Preview with Live's transport" }, laneToggles[arc::kNumLanes];
     juce::OwnedArray<juce::AudioProcessorValueTreeState::SliderAttachment> sAtt;
     juce::OwnedArray<juce::AudioProcessorValueTreeState::ButtonAttachment> bAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> styleAtt;
     std::unique_ptr<juce::FileChooser> chooser;
-    int hoverLane = -1, dragLane = -1;
+    int hoverLane = -1, dragLane = -1, nudgeLane = -1, nudgeApplied = 0;
+    bool scrubbing = false;
+    double viewStart = 0, viewBeats = 0;   // visible window of the timeline (beats); 0 = whole song
     bool dragStarted = false;
     int lastVersion = -1;
 };

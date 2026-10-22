@@ -20,6 +20,7 @@ struct LaneSource
     juce::String source, report;
     bool fromAudio = false;
     double tempo = 0;
+    int nudge = 0;            // 16th steps the user moved the loop start by
 };
 
 class ArcProcessor : public juce::AudioProcessor, private juce::AudioProcessorValueTreeState::Listener
@@ -51,6 +52,13 @@ public:
     void loadFile (int lane, const juce::File& f);      // MIDI or audio; lane -1 = guess from content
     void loadFileSync (int lane, const juce::File& f);  // same, blocking (tests)
     void clearLane (int lane);
+    void nudgeLane (int lane, int steps);              // rotate the loop so a different 16th is bar 1
+    // Arc's own transport (used when Live isn't playing): click the timeline to move, Play to audition
+    void setPosition (double beats) { arcPos = juce::jmax (0.0, beats); }
+    void setPlaying (bool p) { arcPlaying = p; }
+    void setLoop (double startBeat, double endBeat) { loopStart = startBeat; loopEnd = endBeat; }
+    std::atomic<bool> arcPlaying { false };
+    std::atomic<double> arcPos { 0 }, loopStart { 0 }, loopEnd { 0 };   // loopEnd 0 = no loop
     void regenerate (bool newSeed);
     juce::File exportLane (int lane);                    // writes the lane's full-arrangement MIDI, returns the file
     juce::Array<juce::File> exportAll();
