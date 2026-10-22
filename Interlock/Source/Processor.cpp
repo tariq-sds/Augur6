@@ -47,6 +47,47 @@ juce::AudioProcessorValueTreeState::ParameterLayout InterlockProcessor::createLa
     l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ilp::monoLows, 1 }, "Mono Lows", true));
     l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ilp::delta, 1 }, "Delta Listen", false));
     addF (l, ilp::output,    "Output",          -12, 12, 0, -1, dbStr);
+
+    // ---- EQ: global
+    l.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ilp::eqPhase, 1 }, "EQ Phase", juce::StringArray { "Zero Latency", "Linear Phase" }, 0));
+    addF (l, ilp::gainScale, "Gain Scale", 0, 2, 1, -1, pctStr);
+    l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ilp::autoGain, 1 }, "Auto Gain", false));
+    addF (l, ilp::outPan, "Output Pan", -1, 1, 0, -1, [] (float v) { return std::abs (v) < 0.005f ? juce::String ("C") : juce::String (juce::roundToInt (std::abs (v) * 100)) + (v < 0 ? "L" : "R"); });
+
+    // ---- EQ: 24 bands
+    auto logRange = [] (float lo, float hi)
+    {
+        return juce::NormalisableRange<float> (lo, hi,
+            [] (float a, float b, float t) { return a * std::pow (b / a, t); },
+            [] (float a, float b, float v) { return std::log (v / a) / std::log (b / a); });
+    };
+    juce::StringArray shapes, slopes, places;
+    for (int i = 0; i < ileq::kNumShapes; ++i) shapes.add (ileq::shapeName (i));
+    for (int sl : ileq::slopes()) slopes.add (sl == 0 ? juce::String ("Brickwall") : juce::String (sl) + " dB/oct");
+    for (int i = 0; i < ileq::kNumPlaces; ++i) places.add (ileq::placeName (i));
+    for (int b = 0; b < ileq::kBands; ++b)
+    {
+        const juce::String n = "Band " + juce::String (b + 1) + " ";
+        auto id = [b] (int f) { return juce::ParameterID { ilp::band (b, f), 1 }; };
+        l.add (std::make_unique<juce::AudioParameterBool> (id (ilp::fUsed), n + "Used", false));
+        l.add (std::make_unique<juce::AudioParameterBool> (id (ilp::fOn), n + "Enabled", true));
+        l.add (std::make_unique<APF> (id (ilp::fFreq), n + "Frequency", logRange (10, 30000), 1000.0f,
+            juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return hzStr (v); })));
+        l.add (std::make_unique<APF> (id (ilp::fGain), n + "Gain", juce::NormalisableRange<float> (-30, 30), 0.0f,
+            juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return dbStr (v); })));
+        l.add (std::make_unique<APF> (id (ilp::fQ), n + "Q", logRange (0.025f, 40), 1.0f,
+            juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return juce::String (v, v < 1 ? 3 : 2); })));
+        l.add (std::make_unique<juce::AudioParameterChoice> (id (ilp::fShape), n + "Shape", shapes, 0));
+        l.add (std::make_unique<juce::AudioParameterChoice> (id (ilp::fSlope), n + "Slope", slopes, 1));
+        l.add (std::make_unique<juce::AudioParameterChoice> (id (ilp::fPlace), n + "Stereo Placement", places, 0));
+        l.add (std::make_unique<juce::AudioParameterBool> (id (ilp::fDyn), n + "Dynamic", false));
+        l.add (std::make_unique<APF> (id (ilp::fRange), n + "Dynamic Range", juce::NormalisableRange<float> (-30, 30), -6.0f,
+            juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return dbStr (v); })));
+        l.add (std::make_unique<APF> (id (ilp::fThr), n + "Threshold", juce::NormalisableRange<float> (-80, 0), -30.0f,
+            juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return juce::String (v, 1) + " dB"; })));
+        l.add (std::make_unique<juce::AudioParameterBool> (id (ilp::fAuto), n + "Auto Threshold", true));
+        l.add (std::make_unique<juce::AudioParameterBool> (id (ilp::fExt), n + "External Sidechain", false));
+    }
     return l;
 }
 
@@ -60,7 +101,11 @@ InterlockProcessor::InterlockProcessor()
     for (auto* p : getParameters())
         if (auto* w = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
             raw[w->paramID.toStdString()] = apvts.getRawParameterValue (w->paramID);
-    startTimerHz (10);
+    for (int b = 0; b < ileq::kBands; ++b)
+        for (int f = 0; f < ilp::kBandFields; ++f)
+            bandRaw[(size_t) b][(size_t) f] = apvts.getRawParameterValue (ilp::band (b, f));
+    registryId = ileq::Registry::get().add();
+    startTimerHz (30);
 }
 
 bool InterlockProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -96,6 +141,12 @@ void InterlockProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     for (int c = 0; c < 2; ++c) dip[c] = duckSh[c] = boost[c] = {};
     env = compEnv = 0;
     ref = 1e-5f;
+    eq.prepare (sampleRate, samplesPerBlock);
+    spectrum.fs = sampleRate;
+    eqL.assign ((size_t) samplesPerBlock + 8, 0.0f);
+    eqR.assign ((size_t) samplesPerBlock + 8, 0.0f);
+    for (auto& d : dry) d.assign ((size_t) ileq::Engine::kLpSize + 1, 0.0f);
+    dryPos = 0;
 }
 
 void InterlockProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -186,20 +237,31 @@ void InterlockProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
 
     float minDip = 0, minDuck = 0, minComp = 0, scPeak = 0;
     float* chans[2] { main.getWritePointer (0), nch > 1 ? main.getWritePointer (1) : nullptr };
+    if ((int) eqL.size() < n) { eqL.resize ((size_t) n); eqR.resize ((size_t) n); }
 
+    // ---- EQ settings for this block
+    for (int b = 0; b < ileq::kBands; ++b) eq.params[(size_t) b] = bandParams (b);
+    eq.phase = (int) pv (ilp::eqPhase);
+    eq.gainScale = pv (ilp::gainScale);
+    eq.autoGain = pv (ilp::autoGain) > 0.5f;
+    eq.outPan = pv (ilp::outPan);
+    const int lat = eq.latency();
+    spectrum.taps[ileq::Analyser::pre].push (bassMono.data(), n);
+    spectrum.taps[ileq::Analyser::side].push (haveSc ? scMono.data() : nullptr, n);
+
+    // ---- pass 1: Interlock's kick dip, sub duck and bass focus
     for (int i = 0; i < n; ++i)
     {
         const float fDip = sDipF.getNextValue(), fDuck = sDuckF.getNextValue();
         const float fBoost = sBoostF.getNextValue(), gBoostDb = sBoostG.getNextValue();
-        const float q = sDipQ.getNextValue(), mix = sMix.getNextValue(), outG = sOut.getNextValue();
+        const float q = sDipQ.getNextValue();
         const float gDip = std::tan (pi * juce::jmin (fDip, sr * 0.45f) / sr);
         const float gDuckBase = std::tan (pi * juce::jmin (fDuck, sr * 0.45f) / sr);
         const float gBoost = std::tan (pi * juce::jmin (fBoost, sr * 0.45f) / sr);
         const float gDet = std::tan (pi * juce::jmin (fDip * 2.2f, sr * 0.45f) / sr);
 
-        // ---- Kick detector: band around the kick fundamental, envelope normalised to recent hits
+        // kick detector: band around the kick fundamental, envelope normalised to recent hits
         float v1, v2;
-        // low-pass at ~2x the kick fundamental: catches the pitch-swept attack as well as the body
         svf (scBand.ic1, scBand.ic2, scMono[(size_t) i], gDet, 1.41421356f, v1, v2);
         const float a = std::abs (v2);
         scPeak = juce::jmax (scPeak, a);
@@ -214,32 +276,44 @@ void InterlockProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         minDuck = juce::jmin (minDuck, duckNow);
 
         const float Ad = dbToA (dipDb), Ah = dbToA (duckNow), Ab = dbToA (gBoostDb);
-        float y[2] {}, x[2] {};
         for (int c = 0; c < nch; ++c)
         {
-            float s = x[c] = chans[c][i];
-            // dynamic dip (bell) at the kick fundamental
+            float x = chans[c][i];
+            dry[c][(size_t) dryPos] = x;   // for Delta: the input, delayed to line up with the output
+            float s2 = x;
             {
                 const float k = 1.0f / (q * Ad);
-                svf (dip[c].ic1, dip[c].ic2, s, gDip, k, v1, v2);
-                s += k * (Ad * Ad - 1.0f) * v1;
+                svf (dip[c].ic1, dip[c].ic2, s2, gDip, k, v1, v2);
+                s2 += k * (Ad * Ad - 1.0f) * v1;
             }
-            // dynamic sub duck (low shelf)
             {
                 const float k = 1.41421356f;
-                svf (duckSh[c].ic1, duckSh[c].ic2, s, gDuckBase / std::sqrt (Ah), k, v1, v2);
-                s += k * (Ah - 1.0f) * v1 + (Ah * Ah - 1.0f) * v2;
+                svf (duckSh[c].ic1, duckSh[c].ic2, s2, gDuckBase / std::sqrt (Ah), k, v1, v2);
+                s2 += k * (Ah - 1.0f) * v1 + (Ah * Ah - 1.0f) * v2;
             }
-            // static bass focus (bell)
             {
                 const float k = 1.0f / (0.9f * Ab);
-                svf (boost[c].ic1, boost[c].ic2, s, gBoost, k, v1, v2);
-                s += k * (Ab * Ab - 1.0f) * v1;
+                svf (boost[c].ic1, boost[c].ic2, s2, gBoost, k, v1, v2);
+                s2 += k * (Ab * Ab - 1.0f) * v1;
             }
-            y[c] = s;
+            (c == 0 ? eqL : eqR)[(size_t) i] = s2;
         }
+        dryPos = (dryPos + 1) % (int) dry[0].size();
+        if (nch == 1) eqR[(size_t) i] = eqL[(size_t) i];
+    }
 
-        // ---- Mono the lows (removes low side content below ~120 Hz)
+    // ---- pass 2: the EQ (zero latency or linear phase)
+    eq.process (eqL.data(), eqR.data(), n, haveSc ? scMono.data() : nullptr, nch == 2);
+
+    // ---- pass 3: mono lows, parallel compression, delta, output
+    const int dsz = (int) dry[0].size();
+    int readPos = ((dryPos - n - lat) % dsz + dsz) % dsz;
+    for (int i = 0; i < n; ++i)
+    {
+        const float mix = sMix.getNextValue(), outG = sOut.getNextValue();
+        float y[2] { eqL[(size_t) i], eqR[(size_t) i] }, x[2] { dry[0][(size_t) readPos], dry[1][(size_t) readPos] };
+        readPos = (readPos + 1) % dsz;
+
         if (mono && nch == 2)
         {
             float side = 0.5f * (y[0] - y[1]);
@@ -252,7 +326,6 @@ void InterlockProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
             y[1] = mid - side;
         }
 
-        // ---- Parallel compression
         float pk = 0;
         for (int c = 0; c < nch; ++c) pk = juce::jmax (pk, std::abs (y[c]));
         const float gr = gainComputer (juce::Decibels::gainToDecibels (pk, -120.0f));
@@ -267,6 +340,11 @@ void InterlockProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
             if (deltaOn) o = x[c] - o;
             chans[c][i] = o * outG;
         }
+    }
+    {
+        float* o = chans[0];
+        if (nch == 2) { for (int i = 0; i < n; ++i) bassMono[(size_t) i] = 0.5f * (chans[0][i] + chans[1][i]); o = bassMono.data(); }
+        spectrum.taps[ileq::Analyser::post].push (o, n);
     }
 
     dipNowDb = minDip;
@@ -304,6 +382,187 @@ void InterlockProcessor::pollLearn()
     analyzer.learnState = 3;
 }
 
+// ---------------------------------------------------------------- EQ helpers
+ileq::BandParams InterlockProcessor::bandParams (int i) const
+{
+    auto v = [this, i] (int f) { return bandRaw[(size_t) i][(size_t) f]->load(); };
+    ileq::BandParams p;
+    p.used = v (ilp::fUsed) > 0.5f;
+    p.on = v (ilp::fOn) > 0.5f;
+    p.freq = v (ilp::fFreq);
+    p.gainDb = v (ilp::fGain);
+    p.q = v (ilp::fQ);
+    p.shape = (int) v (ilp::fShape);
+    p.slopeIndex = (int) v (ilp::fSlope);
+    p.place = (int) v (ilp::fPlace);
+    p.dynamic = v (ilp::fDyn) > 0.5f;
+    p.range = v (ilp::fRange);
+    p.thresholdDb = v (ilp::fThr);
+    p.autoThr = v (ilp::fAuto) > 0.5f;
+    p.external = v (ilp::fExt) > 0.5f;
+    return p;
+}
+
+void InterlockProcessor::setBandParams (int i, const ileq::BandParams& p, bool gesture)
+{
+    auto set = [&] (int f, float value)
+    {
+        if (auto* prm = apvts.getParameter (ilp::band (i, f)))
+        {
+            const float n = prm->convertTo0to1 (value);
+            if (std::abs (prm->getValue() - n) < 1e-7f) return;
+            if (gesture) prm->beginChangeGesture();
+            prm->setValueNotifyingHost (n);
+            if (gesture) prm->endChangeGesture();
+        }
+    };
+    set (ilp::fShape, (float) p.shape); set (ilp::fSlope, (float) p.slopeIndex); set (ilp::fPlace, (float) p.place);
+    set (ilp::fFreq, p.freq); set (ilp::fGain, p.gainDb); set (ilp::fQ, p.q);
+    set (ilp::fDyn, p.dynamic ? 1.0f : 0.0f); set (ilp::fRange, p.range); set (ilp::fThr, p.thresholdDb);
+    set (ilp::fAuto, p.autoThr ? 1.0f : 0.0f); set (ilp::fExt, p.external ? 1.0f : 0.0f);
+    set (ilp::fOn, p.on ? 1.0f : 0.0f); set (ilp::fUsed, p.used ? 1.0f : 0.0f);
+}
+
+int InterlockProcessor::addBand (double hz, float gainDb, int shape)
+{
+    for (int i = 0; i < ileq::kBands; ++i)
+        if (! bandParams (i).used)
+        {
+            ileq::BandParams p;
+            p.used = true; p.on = true; p.shape = shape; p.freq = (float) juce::jlimit (10.0, 30000.0, hz);
+            p.gainDb = ileq::hasGain (shape) ? gainDb : 0.0f;
+            p.q = 1.0f; p.slopeIndex = ileq::defaultSlopeIndex (shape);
+            setBandParams (i, p);
+            return i;
+        }
+    return -1;
+}
+
+void InterlockProcessor::removeBand (int i)
+{
+    ileq::BandParams p;   // back to defaults, unused
+    setBandParams (i, p);
+    if (eq.soloBand.load() == i) eq.soloBand = -1;
+}
+
+int InterlockProcessor::applyMatch (int maxBands, float amount)
+{
+    // EQ Match: the difference between the sidechain (reference) and this track, fitted with bells in free bands
+    if (spectrum.captureFrames < 5) { spectrum.capturing = false; return 0; }
+    auto diff = spectrum.matchDiff();
+    spectrum.capturing = false;
+    std::array<double, ileq::kPoints> r {};
+    for (int p = 0; p < ileq::kPoints; ++p)
+    {
+        const double hz = ileq::pointHz (p);
+        r[(size_t) p] = (hz >= 25 && hz <= 18000) ? juce::jlimit (-12.0, 12.0, diff[(size_t) p] * amount) : 0.0;
+    }
+    const double fs = eq.sampleRate();
+    int made = 0;
+    for (int k = 0; k < maxBands; ++k)
+    {
+        int best = -1; double bv = 0.75;
+        for (int p = 0; p < ileq::kPoints; ++p) if (std::abs (r[(size_t) p]) > bv) { bv = std::abs (r[(size_t) p]); best = p; }
+        if (best < 0) break;
+        const double g = r[(size_t) best];
+        int lo = best, hi = best;
+        while (lo > 0 && r[(size_t) lo - 1] * g > 0 && std::abs (r[(size_t) lo - 1]) > std::abs (g) * 0.5) --lo;
+        while (hi < ileq::kPoints - 1 && r[(size_t) hi + 1] * g > 0 && std::abs (r[(size_t) hi + 1]) > std::abs (g) * 0.5) ++hi;
+        // a difference that runs off either end of the range is a shelf, anything else a bell
+        const bool lowEdge = ileq::pointHz (lo) < 40, highEdge = ileq::pointHz (hi) > 12000;
+        int slot;
+        if (lowEdge && ! highEdge)       slot = addBand (ileq::pointHz (hi), (float) g, ileq::shLowShelf);
+        else if (highEdge && ! lowEdge)  slot = addBand (ileq::pointHz (lo), (float) g, ileq::shHighShelf);
+        else
+        {
+            const double bw = juce::jlimit (0.25, 4.0, std::log2 (ileq::pointHz (hi) / ileq::pointHz (lo)) + 0.1);
+            slot = addBand (ileq::pointHz (best), (float) g);
+            if (slot >= 0) { auto bq = bandParams (slot); bq.q = (float) (std::sqrt (std::pow (2.0, bw)) / (std::pow (2.0, bw) - 1.0)); setBandParams (slot, bq); }
+        }
+        if (slot < 0) break;
+        auto bp = bandParams (slot);
+        if (! (lowEdge ^ highEdge)) {} else bp.q = 0.7071f;
+        setBandParams (slot, bp);
+        ++made;
+        for (int p = 0; p < ileq::kPoints; ++p) r[(size_t) p] -= ileq::Engine::specDb (bp, 1.0f, fs, ileq::pointHz (p));
+    }
+    return made;
+}
+
+void InterlockProcessor::computeAutoGain()
+{
+    // pink-weighted loudness change of the static curve, so turning things up doesn't fool your ears
+    std::array<ileq::BandParams, ileq::kBands> cur;
+    for (int i = 0; i < ileq::kBands; ++i) cur[(size_t) i] = bandParams (i);
+    const float scale = pv (ilp::gainScale);
+    bool same = scale == lastAutoScale;
+    for (int i = 0; i < ileq::kBands && same; ++i) same = cur[(size_t) i] == lastAutoParams[(size_t) i];
+    if (same) return;
+    lastAutoParams = cur; lastAutoScale = scale;
+    const double fs = currentSampleRate;
+    double sum = 0; int n = 0;
+    for (double hz = 20; hz < 20000; hz *= 1.06, ++n)
+    {
+        double db = 0;
+        for (auto& p : cur) db += ileq::Engine::specDb (p, scale, fs, hz);
+        sum += std::pow (10.0, db / 10.0);
+    }
+    eq.autoGainDb = n ? (float) juce::jlimit (-24.0, 24.0, -10.0 * std::log10 (sum / n)) : 0.0f;
+}
+
+void InterlockProcessor::timerCallback()
+{
+    pollLearn();
+    computeAutoGain();
+    const int lat = (int) pv (ilp::eqPhase) == 1 ? ileq::Engine::kLpSize : 0;
+    if (lat != reportedLatency) { reportedLatency = lat; setLatencySamples (lat); }
+    if (editorOpen.load() || spectrum.capturing)
+    {
+        spectrum.analyse();
+        ileq::Registry::get().publish (registryId, trackName, spectrum.curves[ileq::Analyser::post]);
+    }
+}
+
+juce::ValueTree InterlockProcessor::eqSnapshot() const
+{
+    juce::ValueTree t ("EQ");
+    for (auto* prm : getParameters())
+        if (auto* r = dynamic_cast<juce::RangedAudioParameter*> (prm))
+        {
+            const auto id = r->paramID;
+            if (id.startsWith ("b") || id == ilp::eqPhase || id == ilp::gainScale || id == ilp::autoGain || id == ilp::outPan)
+                t.setProperty (id, r->getValue(), nullptr);
+        }
+    return t;
+}
+
+void InterlockProcessor::eqRestore (const juce::ValueTree& t)
+{
+    if (! t.isValid()) return;
+    for (auto* prm : getParameters())
+        if (auto* r = dynamic_cast<juce::RangedAudioParameter*> (prm))
+            if (t.hasProperty (r->paramID))
+            {
+                r->beginChangeGesture();
+                r->setValueNotifyingHost ((float) t.getProperty (r->paramID));
+                r->endChangeGesture();
+            }
+}
+
+void InterlockProcessor::abSelect (int slot)
+{
+    slot = juce::jlimit (0, 1, slot);
+    if (slot == abSlot) return;
+    abStore[abSlot] = eqSnapshot();
+    abSlot = slot;
+    if (abStore[slot].isValid()) eqRestore (abStore[slot]);
+}
+
+void InterlockProcessor::abCopyToOther()
+{
+    abStore[1 - abSlot] = eqSnapshot();
+}
+
 void InterlockProcessor::getStateInformation (juce::MemoryBlock& dest)
 {
     auto st = apvts.copyState();
@@ -312,6 +571,10 @@ void InterlockProcessor::getStateInformation (juce::MemoryBlock& dest)
     st.setProperty ("kickHz", learnedKickHz.load(), nullptr);
     st.setProperty ("boostHz", learnedBoostHz.load(), nullptr);
     st.setProperty ("overlap", learnedOverlap.load(), nullptr);
+    st.setProperty ("anMode", analyserMode, nullptr);
+    st.setProperty ("anSc", showSidechain, nullptr);
+    st.setProperty ("piano", piano, nullptr);
+    st.setProperty ("range", rangeIndex, nullptr);
     if (auto xml = st.createXml()) copyXmlToBinary (*xml, dest);
 }
 
@@ -335,6 +598,10 @@ void InterlockProcessor::setStateInformation (const void* data, int size)
             learnedBoostHz = (float) tree.getProperty ("boostHz", 0.0f);
             learnedOverlap = (float) tree.getProperty ("overlap", 0.0f);
             if (hasLearned) analyzer.learnState = 3;
+            analyserMode = (int) tree.getProperty ("anMode", 3);
+            showSidechain = (bool) tree.getProperty ("anSc", true);
+            piano = (bool) tree.getProperty ("piano", false);
+            rangeIndex = (int) tree.getProperty ("range", 2);
         }
 }
 

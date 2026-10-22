@@ -5,6 +5,7 @@
 #include "../Source/Processor.h"
 #include "../Source/Editor.h"
 #include <cstdio>
+#include "EqTests.h"
 
 static void writeWav (const juce::File& f, const juce::AudioBuffer<float>& b, double sr)
 {
@@ -158,8 +159,15 @@ int main (int argc, char** argv)
             for (int c = 2; c < buf.getNumChannels(); ++c) buf.copyFrom (c, 0, kick, 0, pos + (int) (sr * 5) - 600, block);
             proc.processBlock (buf, midi);
         }
-        ed->setSize (940, 540);
-        if (auto* e = dynamic_cast<InterlockEditor*> (ed.get())) e->refreshNow();
+        {
+            const int a = proc.addBand (28, 0, ileq::shLowCut);
+            const int b = proc.addBand (210, -4, ileq::shBell); auto bp = proc.bandParams (b); bp.dynamic = true; bp.external = true; bp.range = -6; bp.q = 1.4f; proc.setBandParams (b, bp);
+            const int c = proc.addBand (3500, 3, ileq::shHighShelf); auto cp = proc.bandParams (c); cp.place = ileq::plSide; proc.setBandParams (c, cp);
+            juce::ignoreUnused (a);
+            for (int k = 0; k < 40; ++k) { for (int c2 = 0; c2 < 2; ++c2) buf.copyFrom (c2, 0, bass, 0, (int) (sr * 6) + k * block, block); for (int c2 = 2; c2 < buf.getNumChannels(); ++c2) buf.copyFrom (c2, 0, kick, 0, (int) (sr * 6) + k * block - 600, block); proc.processBlock (buf, midi); proc.runTimerForTests(); }
+        }
+        ed->setSize (InterlockEditor::W, InterlockEditor::H);
+        if (auto* e = dynamic_cast<InterlockEditor*> (ed.get())) { e->refreshNow(); e->getDisplay().select (1, false); e->refreshNow(); }
         auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.5f);
         juce::File f (snap);
         f.deleteFile();
@@ -167,6 +175,9 @@ int main (int argc, char** argv)
         if (auto os = f.createOutputStream()) png.writeImageToStream (img, *os);
     }
 
+    eqtest::run();
+    eqtest::runProcessor();
+    failures += eqtest::fails;
     std::printf ("failures: %d\n", failures);
     return failures == 0 ? 0 : 1;
 }

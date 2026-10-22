@@ -34,6 +34,26 @@ The dip is a dynamic bell at the kick fundamental plus a dynamic low shelf (Sub 
 where the bass has energy but the kick doesn't. A parallel compressor (threshold set from the learned bass level, raised by Drive)
 is blended in with Mix to keep the bass dense between kicks. Mono Lows folds stereo content under ~120 Hz to mono.
 
+### Interlock's EQ (Pro-Q style)
+
+Under the kick/bass engine Interlock has a full 24-band EQ. Its bands run after the kick dip and bass focus.
+
+* **Make a band**: click and drag anywhere on the display (on a spectrum peak it grabs the peak), or double-click.
+  Drag to move, scroll for Q, shift-scroll for the dynamic range, right-click for shape, slope, stereo placement,
+  dynamics, sidechain, solo and delete. Shift-click or Cmd-drag selects several to move together; Alt-click or Delete removes;
+  double-click a band to bypass it. The **BAND** page shows every setting of the selected band.
+* **Shapes**: bell, low/high shelf, low/high cut, notch, band pass, tilt shelf, flat tilt. Slopes 6 to 96 dB/oct, brickwall on the cuts.
+* **Dynamic EQ**: any band. The ring shows its range; threshold is automatic or manual; attack and release follow the
+  frequency. Turn on **External SC** and the band is triggered by the sidechain, so you can duck any part of the bass
+  with the kick, or anything else with anything else.
+* **Stereo placement** per band: Stereo, Left, Right, Mid, Side.
+* **Zero Latency** (analogue-matched filters, no cramping near 20 kHz) or **Linear Phase** (about 85 ms latency, which Live compensates).
+* **Analyser**: pre, post, sidechain; **Collision** shows another Interlock in the session and where the two clash;
+  **Piano** shows notes; hovering shows frequency and note.
+* **MATCH**: press it, play this track with a reference on the sidechain for a few seconds, press again: Interlock fits bands
+  to make this track's tone match the reference.
+* **Auto Gain**, **Gain Scale**, output **Pan**, band **Solo**, and **A / B** compare.
+
 ## Varia: quick start
 
 Put it on any channel or bus with the transport running. **TEXTURE** (the big orb) is the master amount:
