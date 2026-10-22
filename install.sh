@@ -22,6 +22,16 @@ for p in *.component; do
   echo "  installed $AU_DIR/$p"
 done
 
+# Mirror Bridge (Max for Live): into the Live User Library so it shows up in Live's browser
+BRIDGE_SRC="Mirror Bridge (Max for Live)"
+if [ -d "$BRIDGE_SRC" ]; then
+  M4L_DIR="$HOME/Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/Mirror Bridge"
+  mkdir -p "$M4L_DIR"
+  cp "$BRIDGE_SRC"/* "$M4L_DIR/"
+  xattr -dr com.apple.quarantine "$M4L_DIR" 2>/dev/null || true
+  echo "  installed $M4L_DIR"
+fi
+
 killall -9 AudioComponentRegistrar 2>/dev/null || true
 echo ""
 echo "Done. In Ableton Live open Settings > Plug-Ins and press Rescan."

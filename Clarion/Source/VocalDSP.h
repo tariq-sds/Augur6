@@ -401,6 +401,9 @@ public:
     std::array<float, 12> hist {};    // read by the UI and key finder
     std::array<float, 12> bassHist {};
     int frames = 0;
+    double peakinessSum = 0, peakinessWeight = 0;
+    float peakiness() const { return peakinessWeight > 0 ? (float) (peakinessSum / peakinessWeight) : 0.0f; }
+    void resetPeakiness() { peakinessSum = peakinessWeight = 0; }
 
 private:
     void frame()
@@ -434,6 +437,17 @@ private:
             const float wgt = std::sqrt (m * norm);                 // gentle compression
             if (f >= 60.0f) c[(size_t) pc] += wgt;                  // key: skip sub-bass (kick fundamentals)
             if (f >= 38.0f && f < 300.0f) cb[(size_t) pc] += wgt;   // root: bass register
+        }
+        {
+            // per-frame pitch concentration (how 'note-like' this moment is), energy weighted
+            float cm = 0, cs = 0;
+            for (float v : c) { cm = juce::jmax (cm, v); cs += v; }
+            if (cs > 0)
+            {
+                const float wgt = (float) std::sqrt (e / kN);
+                peakinessSum += wgt * (cm / (cs / 12.0f));
+                peakinessWeight += wgt;
+            }
         }
         for (int i = 0; i < 12; ++i)
         {

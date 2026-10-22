@@ -23,6 +23,12 @@ jobs:
           - folder: Clarion
             targets: "Clarion_VST3 Clarion_AU ClarionRoom_VST3 ClarionRoom_AU"
             au: "aufx:Clrn aufx:Clrm"
+          - folder: Mirror
+            targets: "Mirror_VST3 Mirror_AU"
+            au: "aufx:Mirr"
+          - folder: Arc
+            targets: "Arc_VST3 Arc_AU"
+            au: "aufx:Arcx"
     steps:
       - uses: actions/checkout@v4
 
@@ -75,6 +81,8 @@ jobs:
       - name: Package
         run: |
           cp install.sh README.md Toota-Audio-Plugins/
+          mkdir -p "Toota-Audio-Plugins/Mirror Bridge (Max for Live)"
+          cp Mirror/Bridge/Mirror-Bridge.amxd Mirror/Bridge/mirror-bridge.js Mirror/Bridge/mirror-panel.js "Toota-Audio-Plugins/Mirror Bridge (Max for Live)/"
           chmod +x Toota-Audio-Plugins/install.sh
           ls -la Toota-Audio-Plugins
       - uses: actions/upload-artifact@v4

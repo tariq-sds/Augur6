@@ -1,17 +1,19 @@
 # Toota Audio plugins
 
-Three VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
+VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
 
 | Plugin | What it is | Folder |
 |---|---|---|
 | **Augur-6** | Six-voice analog-modelled polysynth, 42 presets | `Augur6/` |
 | **Interlock** | Kick + bass balancer: auto-learned dynamic EQ dip, sub duck, bass focus and parallel compression | `Interlock/` |
 | **Varia** | Movement and variation: per-hit changes, filter/stereo drift and phrase-end fills (rolls, throws, reverse swells, gates, tape stops) | `Varia/` |
+| **Mirror** + **Mirror Bridge** | Reference-track mix matching across stems, key check per stem with transpose; the Max for Live Bridge moves Live's real faders and transposes clips | `Mirror/` |
+| **Arc** | Turns MIDI or audio loops into a full arrangement (intro / build / drop / break / outro) with fills, variations and call-and-response; drag the lanes into Live | `Arc/` |
 | **Clarion** + **Clarion Room** | Vocal clarity pair: vocal EQ, de-ess, clarity, groove-glued parallel compression, vocal ride, key detection and key/root matching; Room carves the music only where the vocal needs space | `Clarion/` |
 
 ## Installing
 
-Every push builds all three on GitHub. Open the **Actions** tab, click the latest green run, download
+Every push builds them all on GitHub. Open the **Actions** tab, click the latest green run, download
 **Toota-Audio-Plugins-macOS**, unzip it, then in Terminal type `bash ` and drag `install.sh` in, press Return.
 In Live: **Settings > Plug-Ins > Rescan**. They appear under **Plug-Ins > Toota Audio**.
 
@@ -69,3 +71,28 @@ Clarion adds 40 ms of latency, which Live compensates automatically.
 
 **Parallel dynamics**: Drive sets how hard the parallel layer is compressed (its threshold follows the vocal's own level),
 Parallel blends it in, and Groove Glue makes that dense layer pulse with the music's drums so the vocal locks to the groove.
+
+## Mirror: quick start
+
+1. Put **Mirror** on every track you want balanced and leave it on **STEM** (the default). Name your tracks:
+   Mirror uses the names to talk to Live and to guess roles (kick, bass, vocal...).
+2. Put **Mirror** on the **Main** track and switch it to **MASTER**.
+3. Optional but recommended: put **Mirror Bridge** (Live browser: Audio Effects > Max Audio Effect) on the Main track too.
+   With it, Mirror moves your actual Live faders (one undo step, with Restore and A/B in the Bridge) and
+   transposes out-of-key clips with Live's own clip Transpose. Without it, each stem's **Mirror Gain** does the job.
+4. In the master, **LOAD REFERENCE** (or drop a WAV/AIFF/MP3 on it), play your loudest section, press **LISTEN & MATCH**.
+5. Stems flagged out of key show the exact transpose. **FIX KEYS** applies it (in Live via the Bridge, or inside Mirror).
+
+Mirror matches the *spectral balance* of the reference. Two stems that live in the same range (two pads, say) can't be told
+apart by a reference, so Mirror keeps those close to where they were; use **Lock** on any stem you've already set by ear.
+Mirror stems only analyse during a LISTEN pass, so they cost almost no CPU the rest of the time.
+
+## Arc: quick start
+
+Put **Arc** on an empty audio track. Drop a loop onto each lane: **Drums**, **Bass**, **Chords**, **Lead**.
+MIDI clips are read directly; audio loops are converted to MIDI (drums by hit detection, bass and lead by pitch tracking,
+chords by polyphonic analysis), using Live's tempo to find the loop length. Separate stems convert far better than a full mix.
+
+Pick an arrangement style, set **Variation**, and press **NEW VARIATIONS** until you like the fills and phrases.
+With **Preview** on, Arc plays the arrangement through its own simple sounds in time with Live's transport.
+Then **DRAG TO LIVE** from each lane onto a MIDI track at bar 1 (or **EXPORT ALL** to `~/Music/Arc Exports`).
