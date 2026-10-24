@@ -5,6 +5,7 @@ VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
 | Plugin | What it is | Folder |
 |---|---|---|
 | **Augur-6** | Six-voice analog-modelled polysynth, 42 presets | `Augur6/` |
+| **Wayfarer** | Three-oscillator mono synth in the style of the classic flagship mono: morphing oscillators with sync and FM, overload, dual ladder filter (stereo LP/LP with spacing, or HP/LP), two mod busses, X/Y touch pad, 25 presets | `Wayfarer/` |
 | **Interlock** | Kick + bass balancer: auto-learned dynamic EQ dip, sub duck, bass focus and parallel compression | `Interlock/` |
 | **Varia** | Movement and variation: per-hit changes, filter/stereo drift and phrase-end fills (rolls, throws, reverse swells, gates, tape stops) | `Varia/` |
 | **Mirror** + **Mirror Bridge** | Reference-track mix matching across stems, key check per stem with transpose; the Max for Live Bridge moves Live's real faders and transposes clips | `Mirror/` |
@@ -16,6 +17,29 @@ VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
 Every push builds them all on GitHub. Open the **Actions** tab, click the latest green run, download
 **Toota-Audio-Plugins-macOS**, unzip it, then in Terminal type `bash ` and drag `install.sh` in, press Return.
 In Live: **Settings > Plug-Ins > Rescan**. They appear under **Plug-Ins > Toota Audio**.
+
+## Wayfarer: quick start
+
+Wayfarer is a monophonic three-oscillator synth laid out like the classic American flagship mono. Load it on a MIDI
+track (Instruments > Plug-ins > Toota Audio > Wayfarer) and browse presets with the arrows at the top.
+
+* **Oscillators**: octave switch (32' to 1') and a WAVE knob that morphs triangle > saw > square > narrow pulse.
+  Osc 2 and 3 have FREQUENCY (±7 semitones, double-click for unison). **1-2 SYNC** locks osc 2 to osc 1,
+  **3 > 1 FM** frequency-modulates osc 1 from osc 3, **3 KB OFF** stops osc 3 following the keys and **3 LO FREQ**
+  turns it into a slow modulator.
+* **Mixer**: levels for the three oscillators and noise, plus **OVERLOAD**, which drives the filters like the
+  famous mixer feedback trick.
+* **Filters**: two ladder filters. **LP / LP** puts one on each side; **SPACING** moves the right one away for wide
+  stereo. **HP / LP** puts a high-pass before the low-pass, and SPACING sets the width of the band. The screen shows
+  the curves as you turn.
+* **Modulation**: an LFO (free, re-triggered by keys, or locked to Live's tempo) and two busses, each
+  SOURCE x SHAPE > DEST. MOD 1 is scaled by your mod wheel, so it's silent until you move the wheel. MOD 2 is
+  always on.
+* **Envelopes**: filter and amp ADSRs. **GATE** = Keys, LFO (re-triggers at the LFO rate) or Drone (always on).
+  **RELEASE** off gives the instrument's short, clipped note ends.
+* **Keys**: glide, legato (single trigger), and low / high / last note priority.
+* **Touch pad**: drag to move X and Y. Pick what each controls and how much. Both are automatable in Live.
+  With **PAD GATE** on, touching the pad plays the envelopes.
 
 ## Interlock: quick start
 

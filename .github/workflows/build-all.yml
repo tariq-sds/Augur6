@@ -14,6 +14,9 @@ jobs:
           - folder: Augur6
             targets: "Augur6_VST3 Augur6_AU"
             au: "aumu:Agr6"
+          - folder: Wayfarer
+            targets: "Wayfarer_VST3 Wayfarer_AU"
+            au: "aumu:Wyfr"
           - folder: Interlock
             targets: "Interlock_VST3 Interlock_AU"
             au: "aufx:Itlk"
