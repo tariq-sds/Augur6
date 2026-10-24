@@ -23,6 +23,9 @@ jobs:
           - folder: Vault
             targets: "Vault_VST3 Vault_AU"
             au: "aufx:Vlt1"
+          - folder: Mixdown
+            targets: "TootaStrip_VST3 TootaStrip_AU TootaMaster_VST3 TootaMaster_AU"
+            au: "aufx:TStr aufx:TMst"
           - folder: Interlock
             targets: "Interlock_VST3 Interlock_AU"
             au: "aufx:Itlk"
@@ -87,6 +90,10 @@ jobs:
           pattern: part-*
           merge-multiple: true
           path: Toota-Audio-Plugins
+      - name: Toota Hits drum library
+        run: |
+          python3 -m pip install --quiet --break-system-packages numpy scipy || python3 -m pip install --quiet numpy scipy
+          python3 Mixdown/Library/make_hits.py "Toota-Audio-Plugins/Toota Hits"
       - name: Package
         run: |
           cp install.sh README.md Toota-Audio-Plugins/

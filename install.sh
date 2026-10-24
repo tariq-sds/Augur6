@@ -32,6 +32,15 @@ if [ -d "$BRIDGE_SRC" ]; then
   echo "  installed $M4L_DIR"
 fi
 
+# Toota Hits: drum one-shots, into the Live User Library so they show up under User Library > Samples
+if [ -d "Toota Hits" ]; then
+  HITS_DIR="$HOME/Music/Ableton/User Library/Samples/Toota Hits"
+  mkdir -p "$HITS_DIR"
+  cp -R "Toota Hits/"* "$HITS_DIR/"
+  xattr -dr com.apple.quarantine "$HITS_DIR" 2>/dev/null || true
+  echo "  installed $HITS_DIR"
+fi
+
 killall -9 AudioComponentRegistrar 2>/dev/null || true
 echo ""
 echo "Done. In Ableton Live open Settings > Plug-Ins and press Rescan."

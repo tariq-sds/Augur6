@@ -8,6 +8,7 @@ VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
 | **Wayfarer** | Three-oscillator mono synth in the style of the classic flagship mono: morphing oscillators with sync and FM, overload, dual ladder filter (stereo LP/LP with spacing, or HP/LP), two mod busses, X/Y touch pad, 25 presets | `Wayfarer/` |
 | **Relay** | Twelve-machine stereo delay for your delay return: digital, tape, bucket-brigade, dual, pattern, reverse, ice, duck, swell, trem, filter, lo-fi; tempo sync, tap, hold | `Relay/` |
 | **Vault** | Twelve-machine stereo reverb for your reverb return: room, hall, plate, spring, swell, bloom, cloud, chorale, shimmer, magneto, nonlinear, reflections; freeze | `Vault/` |
+| **Toota Strip** + **Toota Master** + **Toota Hits** | Mix suite: a pre-balanced chain for every channel (11 source types, 7 macros, one-click gain staging), a mastering chain with loudness targets, LUFS metering and a true-peak limiter, and 128 level-matched drum one-shots | `Mixdown/` |
 | **Interlock** | Kick + bass balancer: auto-learned dynamic EQ dip, sub duck, bass focus and parallel compression | `Interlock/` |
 | **Varia** | Movement and variation: per-hit changes, filter/stereo drift and phrase-end fills (rolls, throws, reverse swells, gates, tape stops) | `Varia/` |
 | **Mirror** + **Mirror Bridge** | Reference-track mix matching across stems, key check per stem with transpose; the Max for Live Bridge moves Live's real faders and transposes clips | `Mirror/` |
@@ -56,6 +57,26 @@ needs) and a **LOW CUT** that keeps the lows out of the effect. Presets don't ch
   what's in the delay forever. STEREO goes from mono to stereo to full ping-pong.
 * **Vault**: DECAY (0.2 to 60 s), PRE-DELAY, MIX, TONE, MOD, plus LOW CUT, HIGH CUT and WIDTH. **FREEZE** holds the
   tail forever.
+
+## Toota mix suite: quick start
+
+**Toota Strip** goes on every channel. Pick what's on the channel (KICK, BASS, DRUMS, HATS, SNARE/CLAP, CHORDS, LEAD,
+VOCAL, BACKING, FX or BUS) and you get a balanced chain straight away: a clean-up high-pass, a corrective dip, body and
+presence, compression, a touch of saturation and stereo handling (kick is mono; bass and chords keep their lows mono).
+Then shape it with seven macros: PUNCH, BODY, AIR, GLUE, DRIVE, WIDTH and CLEAN. Every macro sits at the middle by
+default, which is the preset sound; double-click any knob to go back.
+For gain staging, press **LEVEL** and play the loudest part. After a few seconds the trim is set so the channel
+sits at -18 dBFS RMS, which leaves every channel at the same healthy level before the chain.
+
+**Toota Master** goes last on the master. Pick a preset (Club, Streaming, Deep House, Tech Drive, Bright Pop, Loud,
+Gentle or Demo Check) and press play. AUTO gain brings the track up to the loudness target, and the true-peak
+limiter holds the peaks under the ceiling (-1 dBTP by default). The screen shows short-term and integrated LUFS,
+true peak, limiter reduction and the auto gain. If LIMITER reads more than about 6 dB, lower the target or turn the
+mix down a little.
+
+**Toota Hits** installs into Live's User Library under Samples > Toota Hits. It has 64 kicks (House, Deep, Punch and
+Tight, each named with its key) and 24 claps, 24 snares and 16 rims. Each set is level-matched, so you can swap hits
+without touching the fader.
 
 ## Interlock: quick start
 
