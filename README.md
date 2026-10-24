@@ -6,6 +6,8 @@ VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
 |---|---|---|
 | **Augur-6** | Six-voice analog-modelled polysynth, 42 presets | `Augur6/` |
 | **Wayfarer** | Three-oscillator mono synth in the style of the classic flagship mono: morphing oscillators with sync and FM, overload, dual ladder filter (stereo LP/LP with spacing, or HP/LP), two mod busses, X/Y touch pad, 25 presets | `Wayfarer/` |
+| **Relay** | Twelve-machine stereo delay for your delay return: digital, tape, bucket-brigade, dual, pattern, reverse, ice, duck, swell, trem, filter, lo-fi; tempo sync, tap, hold | `Relay/` |
+| **Vault** | Twelve-machine stereo reverb for your reverb return: room, hall, plate, spring, swell, bloom, cloud, chorale, shimmer, magneto, nonlinear, reflections; freeze | `Vault/` |
 | **Interlock** | Kick + bass balancer: auto-learned dynamic EQ dip, sub duck, bass focus and parallel compression | `Interlock/` |
 | **Varia** | Movement and variation: per-hit changes, filter/stereo drift and phrase-end fills (rolls, throws, reverse swells, gates, tape stops) | `Varia/` |
 | **Mirror** + **Mirror Bridge** | Reference-track mix matching across stems, key check per stem with transpose; the Max for Live Bridge moves Live's real faders and transposes clips | `Mirror/` |
@@ -40,6 +42,20 @@ track (Instruments > Plug-ins > Toota Audio > Wayfarer) and browse presets with 
 * **Keys**: glide, legato (single trigger), and low / high / last note priority.
 * **Touch pad**: drag to move X and Y. Pick what each controls and how much. Both are automatable in Live.
   With **PAD GATE** on, touching the pad plays the envelopes.
+
+## Relay and Vault: quick start
+
+Relay (delay) and Vault (reverb) are built for return channels. Put Relay on your delay return and Vault on your reverb
+return in place of Live's devices. Both start with **KILL DRY** on (only the effect comes out, which is what a return
+needs) and a **LOW CUT** that keeps the lows out of the effect. Presets don't change these three return settings.
+
+* Pick a **machine** from the twelve buttons. The screen says what it does, and the last two big knobs change their
+  names to match it, for example TAPE AGE / WOW on dTAPE, or INTERVAL / AMOUNT on SHIMMER.
+* **Relay**: TIME, REPEATS, MIX, FILTER (repeat tone), GRIT (saturation, or bit depth on LO-FI), plus SPEED / DEPTH
+  for modulation. **SYNC** locks the time to Live's tempo using NOTE VALUE; **TAP** sets a free time. **HOLD** loops
+  what's in the delay forever. STEREO goes from mono to stereo to full ping-pong.
+* **Vault**: DECAY (0.2 to 60 s), PRE-DELAY, MIX, TONE, MOD, plus LOW CUT, HIGH CUT and WIDTH. **FREEZE** holds the
+  tail forever.
 
 ## Interlock: quick start
 

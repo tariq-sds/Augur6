@@ -17,6 +17,12 @@ jobs:
           - folder: Wayfarer
             targets: "Wayfarer_VST3 Wayfarer_AU"
             au: "aumu:Wyfr"
+          - folder: Relay
+            targets: "Relay_VST3 Relay_AU"
+            au: "aufx:Rlay"
+          - folder: Vault
+            targets: "Vault_VST3 Vault_AU"
+            au: "aufx:Vlt1"
           - folder: Interlock
             targets: "Interlock_VST3 Interlock_AU"
             au: "aufx:Itlk"
