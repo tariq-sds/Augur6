@@ -8,7 +8,7 @@ VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
 | **Interlock** | Kick + bass balancer: auto-learned dynamic EQ dip, sub duck, bass focus and parallel compression | `Interlock/` |
 | **Varia** | Movement and variation: per-hit changes, filter/stereo drift and phrase-end fills (rolls, throws, reverse swells, gates, tape stops) | `Varia/` |
 | **Mirror** + **Mirror Bridge** | Reference-track mix matching across stems, key check per stem with transpose; the Max for Live Bridge moves Live's real faders and transposes clips | `Mirror/` |
-| **Arc** | Turns your stems into a full arrangement (intro / build / drop / break / outro): tempo and bar-1 lock, key lock, fills, rolls and call-and-response from your own audio; drag the lanes into Live | `Arc/` |
+| **Arc** + **Arc Tap** | Turns your stems, or tracks captured live from your project with Arc Tap, into a full arrangement (intro / build / drop / break / outro): tempo and bar-1 lock, key lock, fills, rolls and call-and-response from your own audio; drag the lanes into Live | `Arc/` |
 | **Clarion** + **Clarion Room** | Vocal clarity pair: vocal EQ, de-ess, clarity, groove-glued parallel compression, vocal ride, key detection and key/root matching; Room carves the music only where the vocal needs space | `Clarion/` |
 
 ## Installing
@@ -117,6 +117,12 @@ Mirror stems only analyse during a LISTEN pass, so they cost almost no CPU the r
 Arc turns your stems into a finished arrangement, Loopworm-style, but with your own sounds. Three steps, left to right:
 
 **1. Add stems.** Put Arc on an empty audio track. Then either:
+* **Capture straight from Live (no bouncing).** Put **Arc Tap** on each track you want in Arc: audio tracks, or
+  instrument tracks after the synth. It passes the sound through untouched and picks up the track's name. In Arc press
+  **CAPTURE LIVE**, choose 4, 8, 16 or 32 bars, then press play in Live. Every tapped track records from the next bar
+  line, in time with Live's transport, and arrives as a lane named after its track. Silent tracks are skipped.
+  Capture again any time: lanes from the same tracks are replaced in place and keep their settings. Captures are saved
+  in `~/Music/Arc Exports/Live Captures`, so they come back when you reopen the set.
 * **Drop your saved Live set (.als)** onto Arc. Every audio track comes in as a lane, named after the track, in exactly the
   timing Live uses (Arc reads each clip's warp markers, so recordings with a pre-roll and warped clips line up perfectly).
   MIDI tracks need bouncing to audio first; Arc lists any it skipped.

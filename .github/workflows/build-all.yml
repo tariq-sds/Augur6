@@ -27,8 +27,8 @@ jobs:
             targets: "Mirror_VST3 Mirror_AU"
             au: "aufx:Mirr"
           - folder: Arc
-            targets: "Arc_VST3 Arc_AU"
-            au: "aufx:Arcx"
+            targets: "Arc_VST3 Arc_AU ArcTap_VST3 ArcTap_AU"
+            au: "aufx:Arcx aufx:ArcT"
     steps:
       - uses: actions/checkout@v4
 

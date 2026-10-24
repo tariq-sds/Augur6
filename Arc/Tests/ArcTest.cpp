@@ -4,6 +4,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Source/Processor.h"
 #include "../Source/Editor.h"
+#define ARC_TAP_NO_ENTRY 1
+#include "../Tap/Tap.cpp"
 #include <cstdio>
 
 using namespace arc2;
@@ -500,6 +502,104 @@ int main()
         const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
         proc.setPlaying (false);
         check (proc.numStems() == 12 && ms < 20000 * 0.08, "12 lanes: " + juce::String (ms / 200.0, 2) + "% of one core");
+    }
+
+    // ---- live capture: Arc Tap on tracks in Live, no bouncing
+    {
+        struct Head : juce::AudioPlayHead
+        {
+            double ppq = 0, bpm = 125; bool play = false;
+            juce::Optional<PositionInfo> getPosition() const override { PositionInfo p; p.setIsPlaying (play); p.setBpm (bpm); p.setPpqPosition (ppq); return p; }
+        } head;
+        const double bpm = 125, rate = HOST_SR;
+        TapProcessor kickTap, padTap, quietTap;
+        const char* names[] { "Kick", "Pad", "Muted FX" };
+        TapProcessor* tapsArr[] { &kickTap, &padTap, &quietTap };
+        for (int k = 0; k < 3; ++k)
+        {
+            tapsArr[k]->setPlayHead (&head);
+            tapsArr[k]->prepareToPlay (rate, 512);
+            juce::AudioProcessor::TrackProperties tp; tp.name = juce::String (names[k]);
+            tapsArr[k]->updateTrackProperties (tp);
+        }
+        ArcProcessor arc; arc.prepareToPlay (rate, 512); arc.syncTempo (bpm, rate);
+
+        // what each track plays: the kick hits every beat of Live's timeline, louder on the 1 of each bar
+        auto runCapture = [&] (double fromPpq, double beats)
+        {
+            for (auto* t : tapsArr) t->poll();
+            arc.pollCapture();
+            head.play = true; head.ppq = fromPpq;
+            const int block = 512;
+            const int blocks = (int) std::ceil (beats * 60.0 / bpm * rate / block);
+            juce::MidiBuffer midi;
+            for (int bl = 0; bl < blocks; ++bl)
+            {
+                juce::AudioBuffer<float> kb (2, block), pb (2, block), qb (2, block);
+                qb.clear();
+                for (int i = 0; i < block; ++i)
+                {
+                    const double beat = head.ppq + i * bpm / 60.0 / rate;
+                    const double since = (beat - std::floor (beat)) * 60.0 / bpm;
+                    const bool one = ((long long) std::floor (beat)) % 4 == 0;
+                    const float kv = since < 0.12 ? (float) ((one ? 0.9 : 0.45) * std::exp (-since * 30) * std::cos (kPi2 * 55 * since)) : 0.0f;
+                    const float pv = (float) (0.2 * std::sin (kPi2 * 220 * beat * 60.0 / bpm));
+                    kb.setSample (0, i, kv); kb.setSample (1, i, kv); pb.setSample (0, i, pv); pb.setSample (1, i, pv);
+                }
+                kickTap.processBlock (kb, midi); padTap.processBlock (pb, midi); quietTap.processBlock (qb, midi);
+                head.ppq += block * bpm / 60.0 / rate;
+                if (bl % 40 == 0) { for (auto* t : tapsArr) t->poll(); arc.pollCapture(); }
+            }
+            head.play = false;
+            juce::Thread::sleep (1700);
+            for (int k = 0; k < 3; ++k) { for (auto* t : tapsArr) t->poll(); arc.pollCapture(); }
+            waitJobs (arc);
+        };
+
+        arc.startCapture (4);
+        for (auto* t : tapsArr) t->poll();
+        arc.pollCapture();
+        check (arc.taps().size() >= 3 && arc.captureStatus().contains ("ready"), "capture: 3 Arc Taps found and armed (" + arc.captureStatus() + ")");
+        runCapture (6.3, 1.7 + 16 + 2);     // Live starts mid bar 2: capture runs from bar 3
+        auto st = arc.stems();
+        check (! arc.capturing() && st.size() == 2, "capture: kick and pad arrive, the silent track is skipped (" + juce::String ((int) st.size()) + " lanes, " + arc.message() + ")");
+        const Stem* kick = nullptr;
+        for (auto& s : st) if (s.name == "Kick") kick = &s;
+        check (kick != nullptr && kick->role == rKick && kick->timing.fromSet && kick->timing.bars == 4 && std::abs (kick->timing.tempo - bpm) < 1e-6 && kick->timing.offsetSec == 0,
+               "captured kick: named from the track, KICK, 4 bars at Live's 125 BPM, bar 1 at the start");
+        if (kick != nullptr)
+        {
+            auto o = onsets (*kick->original, 0.05f);
+            int worst = 0; for (int k = 0; k < (int) o.size(); ++k) worst = juce::jmax (worst, std::abs (o[(size_t) k] - (int) std::llround (k * 60.0 / bpm * rate)));
+            const auto& b = *kick->original;
+            auto peakAt = [&] (int beat) { const int s0 = (int) std::llround (beat * 60.0 / bpm * rate); return b.getMagnitude (0, s0, (int) (0.1 * rate)); };
+            check (o.size() == 16 && worst <= 2 && peakAt (0) > 1.5f * peakAt (1) && peakAt (4) > 1.5f * peakAt (5),
+                   "captured kick: 16 hits on the grid (worst " + juce::String (worst) + " samples), the loud hit is beat 1 of each bar");
+            check (b.getNumSamples() == (int) std::llround (16 * 60.0 / bpm * rate), "captured kick: exactly 4 bars long");
+        }
+        // capture again: same lanes, settings kept
+        int ki = -1; for (int k = 0; k < (int) st.size(); ++k) if (st[(size_t) k].name == "Kick") ki = k;
+        if (ki >= 0) arc.setVolume (ki, -6.0f);
+        juce::Thread::sleep (5);
+        arc.startCapture (4);
+        runCapture (30.0, 18 + 2);
+        auto st2 = arc.stems();
+        bool kept = false; for (auto& s : st2) if (s.name == "Kick") kept = std::abs (s.volumeDb + 6.0f) < 0.01f;
+        check (st2.size() == 2 && kept, "capture again: lanes replaced in place, kick volume kept");
+        // saved and reopened: timing comes back as captured
+        juce::MemoryBlock mb; arc.getStateInformation (mb);
+        ArcProcessor back; back.prepareToPlay (rate, 512); back.setStateInformation (mb.getData(), (int) mb.getSize()); waitJobs (back);
+        auto st3 = back.stems();
+        bool same = st3.size() == 2; for (auto& s : st3) same &= s.timing.fromSet && s.timing.bars == 4 && s.timing.offsetSec == 0 && (s.name == "Kick" || s.name == "Pad");
+        check (same, "captured lanes reload from the saved set with their timing and names");
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> ed (kickTap.createEditor());
+            auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 2.0f);
+            juce::FileOutputStream os (juce::File::getCurrentWorkingDirectory().getChildFile ("arc_tap_ui.png").withFileExtension ("png"));
+            os.setPosition (0); os.truncate();
+            juce::PNGImageFormat png; png.writeImageToStream (img, os);
+            check (img.isValid(), "Arc Tap editor snapshot");
+        }
     }
 
     // ---- editor snapshots

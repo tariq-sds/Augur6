@@ -54,6 +54,27 @@ target_link_libraries(Arc
     PRIVATE juce::juce_audio_utils juce::juce_dsp
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
 
+# Arc Tap: goes on any track in Live and hands its audio to Arc, in time, without bouncing
+juce_add_plugin(ArcTap
+    COMPANY_NAME                "Toota Audio"
+    BUNDLE_ID                   "com.tootaaudio.arctap"
+    PLUGIN_MANUFACTURER_CODE    Toot
+    PLUGIN_CODE                 ArcT
+    FORMATS                     ${PLUGIN_FORMATS}
+    PRODUCT_NAME                "Arc Tap"
+    IS_SYNTH                    FALSE
+    NEEDS_MIDI_INPUT            FALSE
+    NEEDS_MIDI_OUTPUT           FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+    COPY_PLUGIN_AFTER_BUILD     FALSE
+    VST3_CATEGORIES             Fx Tools
+    AU_MAIN_TYPE                kAudioUnitType_Effect)
+target_sources(ArcTap PRIVATE Tap/Tap.cpp)
+target_compile_definitions(ArcTap PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
+target_link_libraries(ArcTap
+    PRIVATE juce::juce_audio_utils
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+
 option(PLUGIN_BUILD_TESTS "Build offline tests" OFF)
 if(PLUGIN_BUILD_TESTS)
     juce_add_console_app(ArcTest PRODUCT_NAME "ArcTest")
@@ -62,7 +83,7 @@ if(PLUGIN_BUILD_TESTS)
     target_link_libraries(ArcTest PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_audio_formats juce::juce_recommended_config_flags)
 endif()
 
-foreach(t Arc ArcTest)
+foreach(t Arc ArcTap ArcTest)
     if(TARGET ${t})
         target_link_libraries(${t} PRIVATE TootaAssets)
     endif()

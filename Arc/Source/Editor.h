@@ -59,13 +59,14 @@ private:
     int rowAt (juce::Point<int>) const;
     void hint (const juce::String& s) { if (s != hintText) { hintText = s; repaint (0, H - kFooter, W, kFooter); } }
     void openChooser();
+    void captureMenu();
 
     ArcProcessor& proc;
     toota::LookScope lookScope;
     juce::ComboBox styleBox, rootBox;
     juce::Slider variationKnob, levelKnob;
     juce::TextButton keyButton { "KEY LOCK" }, scaleButton { "MINOR" }, detectButton { "DETECT" }, generateButton { "GENERATE" },
-        undoButton { "UNDO" }, redoButton { "REDO" }, playButton { "PLAY" }, addButton { "+ ADD" }, exportButton { "EXPORT" };
+        undoButton { "UNDO" }, redoButton { "REDO" }, playButton { "PLAY" }, addButton { "+ ADD" }, captureButton { "CAPTURE LIVE" }, exportButton { "EXPORT" };
     juce::ToggleButton followToggle { "Follow Live" };
     juce::OwnedArray<juce::AudioProcessorValueTreeState::SliderAttachment> sAtt;
     juce::OwnedArray<juce::AudioProcessorValueTreeState::ButtonAttachment> bAtt;

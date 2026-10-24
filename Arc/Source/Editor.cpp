@@ -57,6 +57,10 @@ ArcEditor::ArcEditor (ArcProcessor& p) : AudioProcessorEditor (p), proc (p)
     playButton.setColour (juce::TextButton::buttonColourId, tt::teal);
     playButton.setColour (juce::TextButton::textColourOffId, tt::cream);
     addButton.setColour (juce::TextButton::buttonColourId, tt::orange);
+    captureButton.setColour (juce::TextButton::buttonColourId, tt::teal);
+    captureButton.setColour (juce::TextButton::textColourOffId, tt::cream);
+    captureButton.setTooltip ("Record your tracks straight from Live while it plays: put Arc Tap on each track you want, press this, then play. No bouncing.");
+    addButton.setTooltip ("Add audio files, a folder, MIDI or a saved Live set (.als)");
     followToggle.setColour (juce::ToggleButton::tickColourId, tt::teal);
     keyButton.setTooltip ("Key lock: keep bass, chords and lead in the key below. Drums are never retuned.");
     scaleButton.setTooltip ("Minor or major");
@@ -65,7 +69,7 @@ ArcEditor::ArcEditor (ArcProcessor& p) : AudioProcessorEditor (p), proc (p)
     followToggle.setTooltip ("When Live is playing, Arc plays along at Live's position. Turn off to use only Arc's own transport.");
     exportButton.setTooltip ("Write every lane and a mix, full length, to Music > Arc Exports");
     for (juce::Component* c : { (juce::Component*) &keyButton, (juce::Component*) &scaleButton, (juce::Component*) &detectButton, (juce::Component*) &generateButton,
-                                (juce::Component*) &undoButton, (juce::Component*) &redoButton, (juce::Component*) &playButton, (juce::Component*) &addButton,
+                                (juce::Component*) &undoButton, (juce::Component*) &redoButton, (juce::Component*) &playButton, (juce::Component*) &addButton, (juce::Component*) &captureButton,
                                 (juce::Component*) &exportButton, (juce::Component*) &followToggle })
         addAndMakeVisible (c);
 
@@ -79,6 +83,7 @@ ArcEditor::ArcEditor (ArcProcessor& p) : AudioProcessorEditor (p), proc (p)
         proc.setPlaying (! proc.arcPlaying.load());
     };
     addButton.onClick = [this] { openChooser(); };
+    captureButton.onClick = [this] { if (proc.capturing()) proc.cancelCapture(); else captureMenu(); };
     exportButton.onClick = [this] { proc.exportAll (true); };
 
     setSize (W, H);
@@ -98,6 +103,29 @@ void ArcEditor::openChooser()
                               for (auto& f : fc.getResults()) paths.add (f.getFullPathName());
                               if (! paths.isEmpty()) proc.addFiles (paths);
                           });
+}
+
+void ArcEditor::captureMenu()
+{
+    const auto taps = proc.taps();
+    juce::PopupMenu m;
+    if (taps.empty())
+    {
+        m.addSectionHeader ("No Arc Tap found yet");
+        m.addItem (-1, "Add Arc Tap (Audio Effects > Plug-ins) to each track", false, false);
+        m.addItem (-1, "you want in Arc, then come back here", false, false);
+    }
+    else
+    {
+        m.addSectionHeader ("Tracks with Arc Tap (" + juce::String ((int) taps.size()) + ")");
+        for (auto& t : taps) m.addItem (-1, t.name, false, false);
+    }
+    m.addSeparator();
+    m.addSectionHeader ("Record from the next bar while Live plays");
+    for (int b : { 4, 8, 16, 32 }) m.addItem (b, "Capture " + juce::String (b) + " bars");
+    juce::Component::SafePointer<ArcEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&captureButton).withMinimumWidth (300),
+                     [safe] (int r) { if (safe != nullptr && r > 0) safe->proc.startCapture (r); });
 }
 
 int ArcEditor::rowH() const
@@ -126,7 +154,7 @@ void ArcEditor::resized()
     followToggle.setBounds (1036, 26, 120, 24);
     levelKnob.setBounds (W - 62, 12, 50, 50);
     // step 1
-    { auto s = step (1); addButton.setBounds (s.getRight() - 92, s.getY() + 17, 80, 34); }
+    { auto s = step (1); addButton.setBounds (s.getRight() - 118, s.getY() + 6, 106, 26); captureButton.setBounds (s.getRight() - 118, s.getY() + 35, 106, 26); }
     // step 2
     {
         auto s = step (2);
@@ -182,6 +210,10 @@ void ArcEditor::timerCallback()
     const bool own = proc.arcPlaying.load() && ! proc.liveDriving.load();
     playButton.setButtonText (proc.liveDriving.load() ? "LIVE" : own ? "STOP" : "PLAY");
     playButton.setColour (juce::TextButton::buttonColourId, own ? tt::coral : tt::teal);
+    const bool capOn = proc.capturing();
+    captureButton.setButtonText (capOn ? "STOP CAPTURE" : "CAPTURE LIVE");
+    captureButton.setColour (juce::TextButton::buttonColourId, capOn ? tt::coral : tt::teal);
+    if (capOn) repaint (0, H - kFooter, W, kFooter);
     scaleButton.setButtonText (scaleButton.getToggleState() ? "MINOR" : "MAJOR");
     if (proc.playing.load() || proc.jobs.load() > 0) repaint();
 }
@@ -242,7 +274,7 @@ void ArcEditor::drawHeader (juce::Graphics& g)
 void ArcEditor::drawSteps (juce::Graphics& g)
 {
     struct S { int n; const char* title; const char* sub; juce::Colour c; };
-    const S steps[] { { 1, "ADD STEMS", "audio, a folder or your .als", tt::orange },
+    const S steps[] { { 1, "ADD STEMS", "files, or from Live", tt::orange },
                       { 2, "SHAPE IT", "pick a style", tt::coral },
                       { 3, "SEND TO LIVE", "", tt::teal } };
     for (auto& s : steps)
@@ -268,7 +300,7 @@ void ArcEditor::drawSteps (juce::Graphics& g)
         {
             g.drawText (s.title, t, juce::Justification::centredLeft);
             g.setColour (tt::inkSoft); g.setFont (tt::font (11.5f, 1));
-            g.drawText (s.sub, t.translated (0, 20).withWidth (170), juce::Justification::centredLeft);
+            g.drawText (s.sub, t.translated (0, 20).withWidth (124), juce::Justification::centredLeft);
         }
     }
     // step 3: the big drag handle
@@ -293,10 +325,10 @@ void ArcEditor::drawEmpty (juce::Graphics& g)
     g.setColour (tt::ink); g.setFont (tt::font (34, 2));
     g.drawText ("Drop your stems here", c.removeFromTop (54).toNearestInt(), juce::Justification::centred);
     g.setColour (tt::inkSoft); g.setFont (tt::font (16, 1));
-    g.drawText ("or click + ADD", c.removeFromTop (30).toNearestInt(), juce::Justification::centred);
+    g.drawText ("or capture them straight from Live with CAPTURE LIVE", c.removeFromTop (30).toNearestInt(), juce::Justification::centred);
     c.removeFromTop (24);
     struct Card { const char* t; const char* s; juce::Colour col; };
-    const Card cards[] { { "Your Live set", "Save it, then drop the .als: every audio track arrives exactly in time, named after your tracks.", tt::teal },
+    const Card cards[] { { "Straight from Live", "Put Arc Tap on the tracks you want, press CAPTURE LIVE, then play. Every track arrives in time. No bouncing.", tt::teal },
                          { "Stems or loops", "Drop files or a whole folder. Names like Kick, Bass, Hats tell Arc what each one is.", tt::coral },
                          { "Then GENERATE", "Intro, build, drop, break, outro. Set each lane STRAIGHT, SOME or LOTS.", tt::orange } };
     const float cw = (c.getWidth() - 32) / 3.0f;

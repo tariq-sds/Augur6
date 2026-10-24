@@ -2,6 +2,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Renderer.h"
 #include "Preview.h"
+#include "Capture.h"
 #include <mutex>
 #include <map>
 
@@ -86,6 +87,15 @@ public:
     void undo();
     void redo();
 
+    // ---- live capture: every Arc Tap in the set records the next N bars while Live plays
+    void startCapture (int bars);
+    void cancelCapture();
+    bool capturing() const { Lock lk (mutex); return cap.active; }
+    juce::String captureStatus() const { Lock lk (mutex); return cap.status; }
+    std::vector<arccap::TapInfo> taps() const { Lock lk (mutex); return tapList; }
+    void pollCapture();                                         // message thread (the watch timer does it)
+    void addCapturedSync (const juce::File& f, const juce::String& track, double bpm, int bars);   // also used by tests
+
     // ---- transport (Arc's own when Live isn't playing)
     void setPosition (double beats) { arcPos = juce::jmax (0.0, beats); }
     void setPlaying (bool p) { arcPlaying = p; }
@@ -129,6 +139,11 @@ private:
     void adoptTiming (arc2::Stem& s);
     int indexOfUid (int uid) const;
 
+    struct CaptureState { bool active = false; juce::String id, status; int bars = 8; juce::int64 started = 0, sawPlay = 0; juce::StringArray loaded; };
+    CaptureState cap;
+    std::vector<arccap::TapInfo> tapList;
+    void loadCaptured (const arccap::TapInfo&, int bars);
+
     mutable std::recursive_mutex mutex;
     juce::String lastMessage;
     std::vector<arc2::Stem> lanes;
@@ -146,7 +161,7 @@ private:
     bool loadMidiStem (arc2::Stem&, const juce::File&);
     juce::ThreadPool pool { 2 };
     std::atomic<bool> dirty { false };
-    struct Watch : juce::Timer { ArcProcessor& p; Watch (ArcProcessor& o) : p (o) {} void timerCallback() override; int tempoQuiet = 0; } watch { *this };
+    struct Watch : juce::Timer { ArcProcessor& p; Watch (ArcProcessor& o) : p (o) {} void timerCallback() override; int tempoQuiet = 0, tick = 0; } watch { *this };
     double sr = 48000;
     double lastAudioBeat = -1;
 

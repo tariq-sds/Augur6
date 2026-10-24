@@ -583,6 +583,135 @@ void ArcProcessor::Watch::timerCallback()
         }
     }
     else tempoQuiet = 0;
+    if (++tick % 5 == 0) p.pollCapture();
+}
+
+// ---------------------------------------------------------------- live capture
+void ArcProcessor::startCapture (int bars)
+{
+    arccap::Request r;
+    r.id = juce::String (arccap::now());
+    r.bars = juce::jlimit (1, 64, bars);
+    r.created = arccap::now();
+    arccap::writeRequest (r);
+    Lock lk (mutex);
+    cap = {};
+    cap.active = true; cap.id = r.id; cap.bars = r.bars; cap.started = r.created;
+    cap.status = "Press play in Live. Arc Tap records " + juce::String (r.bars) + " bars from the next bar line.";
+    setMessage (cap.status);
+}
+
+void ArcProcessor::cancelCapture()
+{
+    Lock lk (mutex);
+    if (! cap.active) return;
+    arccap::Request r; r.id = cap.id; r.bars = cap.bars; r.created = cap.started; r.cancel = true;
+    arccap::writeRequest (r);
+    cap.active = false;
+    cap.status = {};
+    setMessage ("Capture cancelled");
+}
+
+void ArcProcessor::pollCapture()
+{
+    auto list = arccap::liveTaps();
+    Lock lk (mutex);
+    const bool changed = list.size() != tapList.size()
+        || ! std::equal (list.begin(), list.end(), tapList.begin(), [] (const arccap::TapInfo& a, const arccap::TapInfo& b)
+                         { return a.id == b.id && a.name == b.name && a.state == b.state && std::abs (a.progress - b.progress) < 0.01; });
+    tapList = list;
+    if (changed) ++version;
+    if (! cap.active) return;
+
+    int waiting = 0, recording = 0, finished = 0, mine = 0;
+    double prog = 0;
+    for (auto& t : list)
+    {
+        if (t.request != cap.id) continue;
+        ++mine;
+        if (t.state == "armed") ++waiting;
+        else if (t.state == "recording") { ++recording; prog = juce::jmax (prog, t.progress); }
+        else if (t.state == "done" || t.state == "silent") ++finished;
+        if (t.state == "done" && t.file.isNotEmpty() && ! cap.loaded.contains (t.id))
+        {
+            cap.loaded.add (t.id);
+            loadCaptured (t, cap.bars);
+        }
+    }
+    const auto age = arccap::now() - cap.started;
+    if (mine == 0)
+        cap.status = age > 3000 ? "No Arc Tap found. Put Arc Tap on the tracks you want (it's in Live's plug-in list), then press CAPTURE again."
+                                : "Looking for Arc Tap on your tracks...";
+    else if (recording > 0)
+        cap.status = "Capturing " + juce::String (mine) + (mine == 1 ? " track" : " tracks") + ": bar "
+                   + juce::String (juce::jmin (cap.bars, 1 + (int) (prog * cap.bars))) + " of " + juce::String (cap.bars);
+    else if (waiting > 0)
+        cap.status = juce::String (mine) + (mine == 1 ? " track" : " tracks") + " ready. Press play in Live: recording starts on the next bar.";
+    if (mine > 0 && waiting == 0 && recording == 0 && finished == mine && age > 1500)
+    {
+        cap.active = false;
+        const int got = cap.loaded.size();
+        cap.status = {};
+        setMessage (got > 0 ? "Captured " + juce::String (got) + (got == 1 ? " track" : " tracks") + " from Live, in time at "
+                                  + juce::String (list.empty() ? hostBpm.load() : list.front().bpm, 1) + " BPM. Bar 1 = the bar the capture started on."
+                            : "Every tapped track was silent. Check the tracks are playing, then CAPTURE again.");
+        return;
+    }
+    if (age > 15 * 60 * 1000) { cap.active = false; cap.status = {}; setMessage ("Capture timed out"); return; }
+    setMessage (cap.status);
+}
+
+void ArcProcessor::loadCaptured (const arccap::TapInfo& t, int bars)
+{
+    ++jobs;
+    const juce::File f (t.file);
+    const auto name = t.name;
+    const double bpm = t.bpm;
+    pool.addJob ([this, f, name, bpm, bars] { addCapturedSync (f, name, bpm, bars); --jobs; ++version; });
+}
+
+void ArcProcessor::addCapturedSync (const juce::File& f, const juce::String& track, double bpm, int bars)
+{
+    Stem s;
+    if (! decodeStem (s, f)) { setMessage ("Couldn't read the capture of " + track); return; }
+    s.name = track;
+    s.clipTrack = track;
+    s.timing.tempo = bpm > 20 ? bpm : hostBpm.load();
+    s.timing.bars = juce::jmax (1, bars);
+    s.timing.beats = s.timing.bars * 4.0;
+    s.timing.offsetSec = 0;
+    s.timing.fromSet = true;
+    s.timing.shifted = false;
+    // captured again? replace the lane that came from this track and keep how it was set up
+    int existing = -1;
+    {
+        Lock lk (mutex);
+        for (int i = 0; i < (int) lanes.size(); ++i)
+            if (lanes[(size_t) i].clipTrack == track && lanes[(size_t) i].timing.fromSet) { existing = i; break; }
+    }
+    if (existing >= 0)
+    {
+        int role;
+        { Lock lk (mutex); role = lanes[(size_t) existing].role; }
+        analyseStem (s, hostBpm.load(), role);
+        pushUndo();
+        Lock lk (mutex);
+        if (existing >= (int) lanes.size()) return;
+        auto& old = lanes[(size_t) existing];
+        s.role = old.role; s.vary = old.vary; s.volumeDb = old.volumeDb; s.mute = old.mute; s.solo = old.solo;
+        s.hold = old.hold; s.nudge = old.nudge; s.manualTranspose = old.manualTranspose; s.seed = old.seed;
+        s.uid = nextUid++;
+        old = std::move (s);
+        applyKey();
+        prepare (existing);
+        rebuild();
+        return;
+    }
+    analyseStem (s, hostBpm.load(), -1);
+    if (numStems() >= kMaxLanes) { setMessage ("Arc holds 12 stems"); return; }
+    pushUndo();
+    insertStem (std::move (s));
+    if (needKeyDetect.exchange (false)) detectKey();
 }
 
 // ---------------------------------------------------------------- export
@@ -663,6 +792,8 @@ void ArcProcessor::getStateInformation (juce::MemoryBlock& dest)
             t.setProperty ("bars", s.timing.bars, nullptr);
             t.setProperty ("offset", s.timing.offsetSec, nullptr);
             t.setProperty ("shifted", s.timing.shifted, nullptr);
+            t.setProperty ("fromSet", s.timing.fromSet, nullptr);
+            t.setProperty ("track", s.clipTrack, nullptr);
             t.setProperty ("seed", (juce::int64) s.seed, nullptr);
             ls.appendChild (t, nullptr);
         }
@@ -723,6 +854,8 @@ void ArcProcessor::setStateInformation (const void* data, int size)
             {
                 s.timing.tempo = t.getProperty ("tempo"); s.timing.bars = t.getProperty ("bars"); s.timing.beats = s.timing.bars * 4.0;
                 s.timing.offsetSec = t.getProperty ("offset"); s.timing.shifted = t.getProperty ("shifted");
+                s.timing.fromSet = t.getProperty ("fromSet", s.timing.fromSet);
+                if (t.hasProperty ("track")) { s.clipTrack = t.getProperty ("track").toString(); if (s.clipTrack.isNotEmpty()) s.name = s.clipTrack; }
                 s.report = timingReport (s.timing);
             }
             Lock lk (mutex);
