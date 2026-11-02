@@ -6,6 +6,7 @@ VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
 |---|---|---|
 | **Augur-6** | Six-voice analog-modelled polysynth, 42 presets | `Augur6/` |
 | **Wayfarer** | Three-oscillator mono synth in the style of the classic flagship mono: morphing oscillators with sync and FM, overload, dual ladder filter (stereo LP/LP with spacing, or HP/LP), two mod busses, X/Y touch pad, 37 presets including 12 deep / tech house basses | `Wayfarer/` |
+| **Sanctum** | Choir and harmony generator for a vocal: up to 32 singers in four sections on a stage you drag around, each a separate formant-preserving voice with its own pitch drift, timing and vowel size. Harmony from key and scale or from MIDI chords, breath, hall, sub octave, 14 presets | `Sanctum/` |
 | **Relay** | Twelve-machine stereo delay for your delay return: digital, tape, bucket-brigade, dual, pattern, reverse, ice, duck, swell, trem, filter, lo-fi; tempo sync, tap, hold | `Relay/` |
 | **Vault** | Twelve-machine stereo reverb for your reverb return: room, hall, plate, spring, swell, bloom, cloud, chorale, shimmer, magneto, nonlinear, reflections; freeze | `Vault/` |
 | **Toota Strip** + **Toota Master** + **Toota Hits** | Mix suite: a pre-balanced chain for every channel (11 source types, 7 macros, one-click gain staging), a mastering chain with loudness targets, LUFS metering and a true-peak limiter, and 128 level-matched drum one-shots | `Mixdown/` |
@@ -210,3 +211,25 @@ timeline to move, click a section to jump to it, double-click it to loop it, scr
 
 **3. Send to Live.** Drag a lane's arrow (or **DRAG ALL TO LIVE**) into the arrangement at bar 1: each lane lands as a
 full-length, already-arranged audio clip. **EXPORT** writes every lane plus a mix to `~/Music/Arc Exports`.
+
+## Sanctum: quick start
+
+Put Sanctum on a lead vocal track (Audio Effects > Plug-ins > Toota Audio > Sanctum) and pick a preset. Set **Key**
+and **Scale** to your song, choose a **Harmony** (Unison, Octaves, Thirds, Triad Above/Below, Power, Full 4-Part,
+Gospel Stack) and sing or play the vocal: the stage shows which note each section is on.
+
+- **Stage:** drag a section sideways to place it in the stereo field, upwards to send it further back (quieter,
+  darker, wetter). Double-click a section to reset it.
+- **MIDI chords:** create a MIDI track, set its *MIDI To* to the vocal track / Sanctum, and hold chords. While notes
+  are held the choir sings them (highest note to the sopranos, lowest to the basses); let go and it falls back to the
+  key and scale harmony.
+- **Lead / Choir:** Lead is your original vocal (0 dB) and Choir is the ensemble. Pull Lead to Off to print only the
+  choir onto its own track, e.g. one render per section by turning the other sections down.
+- **Humanise** sets how loose the singers are (pitch drift, timing, vowel size). **Character** sets how different the
+  sections sound from the lead (smaller vowels for sopranos, larger for basses). **Formant** moves the whole choir.
+- Parts move in whole semitones from the note you are singing, so your vibrato, slides and phrasing stay in every
+  voice. Small intervals (doubles, thirds) sound most natural; octave jumps and very low parts sound more processed,
+  just as with any pitch-based harmoniser.
+- MIDI Learn: right-click any control. Default keyboard knobs: CC74 Space, 71 Reverb, 70 Humanise, 73 Spread,
+  75 Breath, 79 Energy, 72 Tone, 80 Choir, 81 Lead, 82 Sub, 83 Formant.
+- Latency is 40 ms; Live compensates for it automatically.
