@@ -52,6 +52,8 @@ private:
     juce::Rectangle<int> voiceLedArea;
     int lastVoices = -1;
     juce::String lastPresetText;
+    toota::MidiLearnClicks learnClicks { proc.midiLearn };
+    juce::Label learnLabel;
 };
 
 class Augur6Editor : public juce::AudioProcessorEditor, private juce::Timer

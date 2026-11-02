@@ -149,6 +149,10 @@ Augur6Processor::Augur6Processor()
             apvts.addParameterListener (withId->paramID, this);
         }
 
+    midiLearn.attach (*this);
+    midiLearn.setDefaults ({ { 74, pid::lpfCutoff }, { 71, pid::lpfRes }, { 70, pid::lpfEnv },
+                             { 73, pid::aA }, { 75, pid::aD }, { 79, pid::aS }, { 72, pid::aR },
+                             { 80, pid::fA }, { 81, pid::fD }, { 82, pid::fS }, { 83, pid::fR } });
     loadPreset (0);
 }
 
@@ -239,6 +243,7 @@ void Augur6Processor::fillSettings (augur::Settings& s, augur::FxSettings& f, do
 
 void Augur6Processor::handleMidi (const juce::MidiMessage& m, const augur::Settings& s)
 {
+    if (midiLearn.handle (m)) return;
     if (m.isNoteOn())
         engine.noteOn (m.getNoteNumber(), m.getFloatVelocity(), s);
     else if (m.isNoteOff())
@@ -397,6 +402,8 @@ void Augur6Processor::getStateInformation (juce::MemoryBlock& destData)
     auto state = apvts.copyState();
     state.setProperty ("preset", currentPreset.load(), nullptr);
     state.setProperty ("edited", presetEdited.load(), nullptr);
+    state.removeChild (state.getChildWithName ("MIDIMAP"), nullptr);
+    state.appendChild (midiLearn.toTree(), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -421,6 +428,7 @@ void Augur6Processor::setStateInformation (const void* data, int sizeInBytes)
 
             currentPreset = (int) tree.getProperty ("preset", 0);
             presetEdited = (bool) tree.getProperty ("edited", false);
+            midiLearn.fromTree (tree.getChildWithName ("MIDIMAP"));
             loadingPreset = false;
         }
 }

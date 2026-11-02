@@ -138,6 +138,10 @@ WayfarerProcessor::WayfarerProcessor()
             raw[withId->paramID.toStdString()] = apvts.getRawParameterValue (withId->paramID);
             apvts.addParameterListener (withId->paramID, this);
         }
+    midiLearn.attach (*this);
+    midiLearn.setDefaults ({ { 74, pid::cutoff }, { 71, pid::res }, { 70, pid::envAmt },
+                             { 73, pid::aA }, { 75, pid::aD }, { 79, pid::aS }, { 72, pid::aR },
+                             { 80, pid::fA }, { 81, pid::fD }, { 82, pid::fS }, { 83, pid::fR } });
     loadPreset (0);
 }
 
@@ -213,6 +217,7 @@ void WayfarerProcessor::fillSettings (wf::Settings& s, wf::FxSettings& f, double
 
 void WayfarerProcessor::handleMidi (const juce::MidiMessage& m, const wf::Settings& s)
 {
+    if (midiLearn.handle (m)) return;
     if (m.isNoteOn())        engine.noteOn (m.getNoteNumber(), m.getFloatVelocity(), s);
     else if (m.isNoteOff())  engine.noteOff (m.getNoteNumber(), s);
     else if (m.isPitchWheel()) bendNorm = juce::jlimit (-1.0f, 1.0f, (float) (m.getPitchWheelValue() - 8192) / 8191.0f);
@@ -337,6 +342,8 @@ void WayfarerProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto state = apvts.copyState();
     state.setProperty ("preset", currentPreset.load(), nullptr);
     state.setProperty ("edited", presetEdited.load(), nullptr);
+    state.removeChild (state.getChildWithName ("MIDIMAP"), nullptr);
+    state.appendChild (midiLearn.toTree(), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -357,6 +364,7 @@ void WayfarerProcessor::setStateInformation (const void* data, int sizeInBytes)
                 }
             currentPreset = (int) tree.getProperty ("preset", 0);
             presetEdited = (bool) tree.getProperty ("edited", false);
+            midiLearn.fromTree (tree.getChildWithName ("MIDIMAP"));
             loadingPreset = false;
         }
 }

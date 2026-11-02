@@ -152,6 +152,7 @@ juce::Slider* WayfarerPanel::knob (const char* id, const juce::String& label, in
     sl->setColour (juce::Slider::rotarySliderFillColourId, accent);
     addAndMakeVisible (sl);
     sliderAtts.add (new juce::AudioProcessorValueTreeState::SliderAttachment (proc.apvts, id, *sl));
+    learnClicks.add (*sl, id);
     if (auto* param = proc.apvts.getParameter (id))
     {
         sl->setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
@@ -170,6 +171,7 @@ void WayfarerPanel::toggle (const char* id, const juce::String& text, juce::Rect
     t->setBounds (r);
     if (auto* param = proc.apvts.getParameter (id)) t->setTooltip (param->getName (64));
     buttonAtts.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (proc.apvts, id, *t));
+    learnClicks.add (*t, id);
 }
 
 void WayfarerPanel::combo (const char* id, juce::Rectangle<int> r, const juce::String& cap)
@@ -184,6 +186,7 @@ void WayfarerPanel::combo (const char* id, juce::Rectangle<int> r, const juce::S
     addAndMakeVisible (cb);
     cb->setBounds (r);
     comboAtts.add (new juce::AudioProcessorValueTreeState::ComboBoxAttachment (proc.apvts, id, *cb));
+    learnClicks.add (*cb, id);
     if (cap.isNotEmpty()) caption (cap, { r.getX() - 58, r.getY(), 54, r.getHeight() }, 10.0f, tt::inkSoft);
 }
 
@@ -348,12 +351,18 @@ WayfarerPanel::WayfarerPanel (WayfarerProcessor& p) : proc (p), pad (p), filterV
     nextButton.onClick = [this, numPresets] { const int cur = proc.currentPreset.load(); proc.loadPreset (cur < 0 || cur >= numPresets - 1 ? 0 : cur + 1); refresh(); };
     presetButton.onClick = [this] { showPresetMenu(); };
 
+    learnLabel.setFont (toota::font (13.0f, 2));
+    learnLabel.setColour (juce::Label::textColourId, toota::coral);
+    learnLabel.setJustificationType (juce::Justification::centredLeft);
+    learnLabel.setBounds (996, 18, 320, 36);
+    addAndMakeVisible (learnLabel);
     setSize (kWidth, kHeight);
     refresh();
 }
 
 WayfarerPanel::~WayfarerPanel()
 {
+    learnClicks.removeAll();
     for (auto* s : sliders) s->setLookAndFeel (nullptr);
     for (auto* t : toggles) t->setLookAndFeel (nullptr);
     for (auto* c : combos)  c->setLookAndFeel (nullptr);
@@ -393,6 +402,11 @@ void WayfarerPanel::showPresetMenu()
 
 void WayfarerPanel::refresh()
 {
+    {
+        const auto& ml = proc.midiLearn;
+        const juce::String t = ml.isLearning() ? "MIDI LEARN: turn a knob for " + ml.learningName() : juce::String();
+        if (learnLabel.getText() != t) learnLabel.setText (t, juce::dontSendNotification);
+    }
     const auto& list = factoryPresets();
     const int idx = proc.currentPreset.load();
     const juce::String text = juce::isPositiveAndBelow (idx, (int) list.size())

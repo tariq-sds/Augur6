@@ -5,7 +5,7 @@ VST3 / Audio Unit plugins for Ableton Live (macOS 11+, Intel and Apple Silicon).
 | Plugin | What it is | Folder |
 |---|---|---|
 | **Augur-6** | Six-voice analog-modelled polysynth, 42 presets | `Augur6/` |
-| **Wayfarer** | Three-oscillator mono synth in the style of the classic flagship mono: morphing oscillators with sync and FM, overload, dual ladder filter (stereo LP/LP with spacing, or HP/LP), two mod busses, X/Y touch pad, 25 presets | `Wayfarer/` |
+| **Wayfarer** | Three-oscillator mono synth in the style of the classic flagship mono: morphing oscillators with sync and FM, overload, dual ladder filter (stereo LP/LP with spacing, or HP/LP), two mod busses, X/Y touch pad, 37 presets including 12 deep / tech house basses | `Wayfarer/` |
 | **Relay** | Twelve-machine stereo delay for your delay return: digital, tape, bucket-brigade, dual, pattern, reverse, ice, duck, swell, trem, filter, lo-fi; tempo sync, tap, hold | `Relay/` |
 | **Vault** | Twelve-machine stereo reverb for your reverb return: room, hall, plate, spring, swell, bloom, cloud, chorale, shimmer, magneto, nonlinear, reflections; freeze | `Vault/` |
 | **Toota Strip** + **Toota Master** + **Toota Hits** | Mix suite: a pre-balanced chain for every channel (11 source types, 7 macros, one-click gain staging), a mastering chain with loudness targets, LUFS metering and a true-peak limiter, and 128 level-matched drum one-shots | `Mixdown/` |
@@ -43,6 +43,11 @@ track (Instruments > Plug-ins > Toota Audio > Wayfarer) and browse presets with 
 * **Keys**: glide, legato (single trigger), and low / high / last note priority.
 * **Touch pad**: drag to move X and Y. Pick what each controls and how much. Both are automatable in Live.
   With **PAD GATE** on, touching the pad plays the envelopes.
+
+**House Bass** presets (first in the list): Deep House Sub, Rubber Tech Bass, Analog Sub Pluck, Fat Three-Osc Bass,
+Rolling Reese, Growl Tech Bass, Organ Bass, Rolling Acid Tech, Bassline Donk, Bouncy Square Sub, Warm Sustain Bass,
+Plucky Deep Sub. **MIDI Learn:** right-click any control to map a keyboard knob; filter and both envelopes are
+pre-mapped to CC 70-75 and 79-83 (same map as Augur-6, see `Augur6/README.md`).
 
 ## Relay and Vault: quick start
 

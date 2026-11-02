@@ -4,6 +4,7 @@
 #include "Params.h"
 #include "Engine.h"
 #include "Effects.h"
+#include "../../Common/MidiLearn.h"
 
 class WayfarerProcessor : public juce::AudioProcessor,
                           private juce::AudioProcessorValueTreeState::Listener
@@ -46,6 +47,7 @@ public:
     std::atomic<bool> padTouched { false };      // the editor's touch pad is being held
     std::atomic<bool> sounding { false };
     std::atomic<float> lastPitch { 60 }, outLevel { 0 };
+    toota::MidiLearn midiLearn;
 
 private:
     float p (const char* id) const;

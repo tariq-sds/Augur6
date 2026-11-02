@@ -4,6 +4,7 @@
 #include "Params.h"
 #include "Synth.h"
 #include "Effects.h"
+#include "../../Common/MidiLearn.h"
 
 class Augur6Processor : public juce::AudioProcessor,
                         private juce::AudioProcessorValueTreeState::Listener
@@ -46,6 +47,7 @@ public:
     std::atomic<int> currentPreset { 0 };
     std::atomic<bool> presetEdited { false };
     std::atomic<int> voicesPlaying { 0 };
+    toota::MidiLearn midiLearn;
 
 private:
     float p (const char* id) const;

@@ -11,6 +11,79 @@ const std::vector<Preset>& factoryPresets()
 {
     static const std::vector<Preset> bank
     {
+        // ======================= HOUSE CHORDS (warm, low resonance, made for chord stabs and progressions)
+        { "Deep House Stab", "House Chords", { { volume, 0.0f },
+            { osc2Fine, 6 }, { mixOsc1, 0.8f }, { mixOsc2, 0.7f }, { slop, 0.3f },
+            { lpfCutoff, 900 }, { lpfRes, 0.12f }, { lpfEnv, 0.35f }, { lpfKey, 0.4f },
+            { fA, 0.002f }, { fD, 0.35f }, { fS, 0.15f }, { fR, 0.25f },
+            { aA, 0.002f }, { aD, 0.5f }, { aS, 0.4f }, { aR, 0.3f }, { aVel, 0.4f },
+            { choMix, 0.25f }, { revMix, 0.2f }, { dlyMix, 0.12f }, { dlySyncRate, 7 } } },
+
+        { "Warm Organ Chords", "House Chords", { { volume, -4.0f },
+            { osc1Shape, 0.8f }, { osc1PW, 0.5f }, { osc2Freq, 12 }, { osc2Shape, 0.0f }, { mixOsc1, 0.7f }, { mixOsc2, 0.5f },
+            { lpfCutoff, 2200 }, { lpfRes, 0.0f }, { lpfEnv, 0.0f }, { lpfKey, 0.5f },
+            { aA, 0.004f }, { aD, 0.3f }, { aS, 1.0f }, { aR, 0.08f }, { aVel, 0.1f },
+            { choMix, 0.45f }, { choRate, 5.5f }, { choDepth, 0.35f }, { revMix, 0.15f } } },
+
+        { "House Keys", "House Chords", { { volume, 0.0f },
+            { osc1Shape, 0.1f }, { osc2Freq, 12 }, { osc2Shape, 0.1f }, { mixOsc1, 0.85f }, { mixOsc2, 0.3f }, { slop, 0.2f },
+            { lpfCutoff, 1800 }, { lpfRes, 0.05f }, { lpfEnv, 0.25f }, { lpfVel, 0.4f },
+            { fD, 0.6f }, { fS, 0.2f }, { aA, 0.002f }, { aD, 1.2f }, { aS, 0.3f }, { aR, 0.5f }, { aVel, 0.5f },
+            { choMix, 0.3f }, { choRate, 0.8f }, { revMix, 0.15f } } },
+
+        { "90s Piano Stab", "House Chords", { { volume, 0.0f },
+            { osc1Shape, 0.85f }, { osc1PW, 0.3f }, { osc2Freq, 12 }, { osc2Fine, 4 }, { mixOsc1, 0.8f }, { mixOsc2, 0.5f },
+            { lpfCutoff, 2500 }, { lpfRes, 0.05f }, { lpfEnv, 0.3f }, { fD, 0.2f }, { fS, 0.0f },
+            { aA, 0.001f }, { aD, 0.45f }, { aS, 0.0f }, { aR, 0.3f }, { aVel, 0.4f }, { revMix, 0.2f } } },
+
+        { "Detroit Strings", "House Chords", { { volume, -2.0f },
+            { osc2Fine, 9 }, { mixOsc1, 0.75f }, { mixOsc2, 0.75f }, { slop, 0.4f },
+            { lpfCutoff, 1500 }, { lpfRes, 0.05f }, { lpfEnv, 0.1f },
+            { aA, 0.4f }, { aD, 1.0f }, { aS, 0.9f }, { aR, 1.2f }, { aVel, 0.15f },
+            { choMix, 0.5f }, { revMix, 0.3f }, { panSpread, 0.6f } } },
+
+        { "Dub Chord", "House Chords", { { volume, 0.0f },
+            { osc2Fine, 5 }, { mixOsc1, 0.8f }, { mixOsc2, 0.6f },
+            { lpfCutoff, 700 }, { lpfRes, 0.1f }, { lpfEnv, 0.3f }, { fD, 0.3f }, { fS, 0.1f },
+            { aA, 0.002f }, { aD, 0.4f }, { aS, 0.2f }, { aR, 0.3f },
+            { dlyMix, 0.35f }, { dlySyncRate, 4 }, { dlyFb, 0.5f }, { revMix, 0.2f }, { drive, 0.1f } } },
+
+        { "Soft Pad Chords", "House Chords", { { volume, -2.0f },
+            { osc2Shape, 0.15f }, { osc2Fine, 7 }, { mixOsc1, 0.7f }, { mixOsc2, 0.7f }, { slop, 0.35f },
+            { lpfCutoff, 1100 }, { lpfRes, 0.05f }, { lpfEnv, 0.15f }, { fA, 0.8f }, { fD, 2.0f }, { fS, 0.6f },
+            { aA, 0.6f }, { aD, 1.0f }, { aS, 0.9f }, { aR, 1.5f }, { aVel, 0.1f },
+            { choMix, 0.3f }, { revMix, 0.35f }, { revSize, 0.75f }, { panSpread, 0.6f } } },
+
+        { "Garage Chord Pluck", "House Chords", { { volume, 0.0f },
+            { osc2Freq, 12 }, { osc2Shape, 0.75f }, { mixOsc1, 0.8f }, { mixOsc2, 0.4f },
+            { lpfCutoff, 600 }, { lpfRes, 0.1f }, { lpfEnv, 0.55f }, { fD, 0.18f }, { fS, 0.0f },
+            { aA, 0.001f }, { aD, 0.3f }, { aS, 0.0f }, { aR, 0.2f }, { aVel, 0.4f },
+            { dlyMix, 0.2f }, { dlySyncRate, 7 }, { revMix, 0.15f } } },
+
+        { "Minor 9 Keys", "House Chords", { { volume, 0.0f },
+            { osc1Shape, 0.2f }, { osc2Shape, 0.0f }, { osc2Fine, 3 }, { mixOsc1, 0.8f }, { mixOsc2, 0.5f },
+            { lpfCutoff, 1300 }, { lpfRes, 0.0f }, { lpfEnv, 0.2f }, { lpfVel, 0.3f }, { fD, 0.8f }, { fS, 0.3f },
+            { aA, 0.003f }, { aD, 1.5f }, { aS, 0.35f }, { aR, 0.6f }, { aVel, 0.5f },
+            { choMix, 0.35f }, { choRate, 0.5f }, { revMix, 0.2f } } },
+
+        { "Filtered Disco Chords", "House Chords", { { volume, 0.0f },
+            { osc2Fine, 6 }, { mixOsc1, 0.8f }, { mixOsc2, 0.6f },
+            { lpfCutoff, 1400 }, { lpfRes, 0.15f }, { lpfEnv, 0.1f },
+            { lfoRate, 0.2f }, { lfoAmount, 0.15f }, { lfoFreq1, 0 }, { lfoFreq2, 0 }, { lfoLPF, 1 },
+            { aA, 0.003f }, { aD, 0.4f }, { aS, 0.8f }, { aR, 0.25f }, { choMix, 0.3f }, { revMix, 0.15f } } },
+
+        { "Velvet Stab", "House Chords", { { volume, 0.0f },
+            { osc2Fine, 8 }, { mixOsc1, 0.75f }, { mixOsc2, 0.75f }, { slop, 0.35f },
+            { lpfCutoff, 650 }, { lpfRes, 0.1f }, { lpfEnv, 0.45f }, { fD, 0.5f }, { fS, 0.2f },
+            { aA, 0.002f }, { aD, 0.7f }, { aS, 0.2f }, { aR, 0.4f }, { aVel, 0.35f },
+            { choMix, 0.3f }, { revMix, 0.25f } } },
+
+        { "Sunset Pad", "House Chords", { { volume, -2.0f },
+            { osc1Shape, 0.4f }, { osc2Fine, 10 }, { mixOsc1, 0.7f }, { mixOsc2, 0.7f }, { slop, 0.45f },
+            { lpfCutoff, 900 }, { lpfRes, 0.05f }, { lpfEnv, 0.2f }, { fA, 1.5f }, { fD, 2.5f }, { fS, 0.5f },
+            { aA, 1.2f }, { aD, 1.0f }, { aS, 0.9f }, { aR, 2.0f }, { aVel, 0.1f },
+            { choMix, 0.35f }, { revMix, 0.4f }, { revSize, 0.85f }, { panSpread, 0.7f } } },
+
         // ======================= PADS
         { "Velvet Horizon", "Pads", { { volume, -2.5f },
             { osc2Fine, 7 }, { mixOsc1, 0.7f }, { mixOsc2, 0.7f }, { slop, 0.45f },
@@ -324,5 +397,5 @@ const std::vector<Preset>& factoryPresets()
 
 juce::StringArray presetCategories()
 {
-    return { "Pads", "Brass", "Keys", "Bass", "Leads", "Plucks", "Poly", "FX" };
+    return { "House Chords", "Pads", "Brass", "Keys", "Bass", "Leads", "Plucks", "Poly", "FX" };
 }

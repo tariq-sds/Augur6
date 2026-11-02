@@ -13,6 +13,64 @@ const std::vector<Preset>& factoryPresets()
 {
     static const std::vector<Preset> bank
     {
+        // ======================= HOUSE BASS (deep house and tech house, ready to go)
+        { "Deep House Sub", "House Bass", { { volume, 0.0f },
+            { o1Oct, 1 }, { o1Wave, 0.25f }, { o2Oct, 0 }, { o2Wave, 0.0f }, { mix1, 0.9f }, { mix2, 0.5f },
+            { cutoff, 180 }, { res, 0.2f }, { envAmt, 0.35f }, { kb, 0.5f }, { fD, 0.25f }, { fS, 0.2f },
+            { aD, 0.5f }, { aS, 0.7f }, { aR, 0.12f }, { drift, 0.15f } } },
+
+        { "Rubber Tech Bass", "House Bass", { { volume, 0.0f },
+            { o1Oct, 1 }, { o1Wave, 0.667f }, { mix1, 1.0f },
+            { cutoff, 250 }, { res, 0.45f }, { envAmt, 0.65f }, { fD, 0.14f }, { fS, 0.0f },
+            { aD, 0.25f }, { aS, 0.3f }, { aR, 0.06f }, { overload, 0.25f }, { legato, 0 } } },
+
+        { "Analog Sub Pluck", "House Bass", { { volume, 0.0f },
+            { o1Oct, 1 }, { o1Wave, 0.8f }, { o3Oct, 0 }, { o3Wave, 0.667f }, { mix1, 0.9f }, { mix3, 0.45f },
+            { cutoff, 300 }, { res, 0.3f }, { envAmt, 0.6f }, { fD, 0.12f }, { fS, 0.05f },
+            { aD, 0.22f }, { aS, 0.2f }, { aR, 0.05f }, { legato, 0 } } },
+
+        { "Fat Three-Osc Bass", "House Bass", { { volume, 0.0f },
+            { o1Oct, 1 }, { o2Oct, 1 }, { o2Freq, 0.07f }, { o3Oct, 0 }, { o3Freq, -0.05f },
+            { mix1, 0.9f }, { mix2, 0.8f }, { mix3, 0.6f }, { overload, 0.35f },
+            { cutoff, 400 }, { res, 0.2f }, { envAmt, 0.5f }, { fD, 0.3f }, { fS, 0.3f }, { aD, 0.5f }, { aS, 0.8f } } },
+
+        { "Rolling Reese", "House Bass", { { volume, -1.0f },
+            { o1Oct, 1 }, { o2Oct, 1 }, { o2Freq, 0.18f }, { mix1, 0.9f }, { mix2, 0.9f }, { overload, 0.3f },
+            { cutoff, 600 }, { res, 0.15f }, { envAmt, 0.2f }, { m2Src, 0 }, { m2Dest, 3 }, { m2Amt, 0.25f }, { lfoRate, 0.3f },
+            { aS, 1.0f }, { aR, 0.1f } } },
+
+        { "Growl Tech Bass", "House Bass", { { volume, -1.0f },
+            { o1Oct, 1 }, { o2Oct, 2 }, { o2Freq, 5.0f }, { hardSync, 1 }, { mix1, 0.6f }, { mix2, 0.9f },
+            { m2Src, 5 }, { m2Dest, 1 }, { m2Amt, 0.45f }, { overload, 0.5f },
+            { cutoff, 900 }, { res, 0.3f }, { envAmt, 0.5f }, { fD, 0.2f }, { fS, 0.2f }, { aD, 0.35f }, { aS, 0.5f } } },
+
+        { "Organ Bass", "House Bass", { { volume, 0.0f },
+            { o1Oct, 1 }, { o1Wave, 0.667f }, { o2Oct, 2 }, { o2Wave, 0.667f }, { mix1, 0.8f }, { mix2, 0.5f },
+            { cutoff, 1200 }, { res, 0.0f }, { envAmt, 0.1f }, { aA, 0.002f }, { aD, 0.25f }, { aS, 0.5f }, { aR, 0.05f }, { legato, 0 } } },
+
+        { "Rolling Acid Tech", "House Bass", { { volume, 0.0f },
+            { o1Oct, 1 }, { mix1, 1.0f }, { overload, 0.4f },
+            { cutoff, 350 }, { res, 0.7f }, { envAmt, 0.7f }, { fVel, 0.6f }, { fD, 0.18f }, { fS, 0.05f },
+            { glideOn, 1 }, { glide, 0.05f } } },
+
+        { "Bassline Donk", "House Bass", { { volume, 0.0f },
+            { o1Oct, 1 }, { o1Wave, 0.0f }, { o3Oct, 3 }, { fm, 0.55f }, { mix1, 1.0f },
+            { cutoff, 1500 }, { envAmt, 0.4f }, { fD, 0.1f }, { fS, 0.05f }, { aD, 0.3f }, { aS, 0.1f }, { aR, 0.05f }, { legato, 0 } } },
+
+        { "Bouncy Square Sub", "House Bass", { { volume, 0.0f },
+            { o1Oct, 0 }, { o1Wave, 0.667f }, { o2Oct, 1 }, { o2Wave, 0.667f }, { mix1, 0.7f }, { mix2, 0.5f },
+            { cutoff, 350 }, { envAmt, 0.4f }, { fD, 0.15f }, { fS, 0.1f }, { aD, 0.3f }, { aS, 0.5f }, { aR, 0.06f }, { legato, 0 } } },
+
+        { "Warm Sustain Bass", "House Bass", { { volume, 0.0f },
+            { o1Oct, 1 }, { o2Oct, 1 }, { o2Wave, 0.667f }, { o2Freq, -0.05f }, { mix1, 0.9f }, { mix2, 0.6f },
+            { cutoff, 300 }, { res, 0.1f }, { envAmt, 0.25f }, { kb, 0.6f }, { fA, 0.01f }, { fD, 0.6f }, { fS, 0.5f },
+            { aS, 1.0f }, { aR, 0.2f } } },
+
+        { "Plucky Deep Sub", "House Bass", { { volume, 0.0f },
+            { o1Oct, 1 }, { o1Wave, 0.1f }, { mix1, 1.0f }, { o3Oct, 0 }, { o3Wave, 0.0f }, { mix3, 0.5f },
+            { cutoff, 220 }, { res, 0.15f }, { envAmt, 0.45f }, { fD, 0.1f }, { fS, 0.0f },
+            { aD, 0.35f }, { aS, 0.15f }, { aR, 0.08f }, { legato, 0 } } },
+
         // ======================= BASS
         { "Wayfarer Bass", "Bass", { { volume, 0.0f },
             { o1Oct, 1 }, { o2Oct, 1 }, { o2Freq, 0.08f }, { o3Oct, 0 }, { o3Wave, 0.667f },
@@ -144,5 +202,5 @@ const std::vector<Preset>& factoryPresets()
 
 juce::StringArray presetCategories()
 {
-    return { "Bass", "Leads", "Keys", "Sweeps", "FX" };
+    return { "House Bass", "Bass", "Leads", "Keys", "Sweeps", "FX" };
 }

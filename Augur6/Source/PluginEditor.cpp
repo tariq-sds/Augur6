@@ -68,6 +68,7 @@ void AugurPanel::knob (const Section& s, const char* id, const juce::String& lab
     sl->setName (label);
     addAndMakeVisible (sl);
     sliderAtts.add (new juce::AudioProcessorValueTreeState::SliderAttachment (proc.apvts, id, *sl));
+    learnClicks.add (*sl, id);
     if (auto* param = proc.apvts.getParameter (id))
         sl->setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
 
@@ -83,6 +84,7 @@ void AugurPanel::toggle (const juce::Rectangle<int>& r, const char* id, const ju
     addAndMakeVisible (t);
     t->setBounds (r);
     buttonAtts.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (proc.apvts, id, *t));
+    learnClicks.add (*t, id);
 }
 
 void AugurPanel::combo (const juce::Rectangle<int>& r, const char* id)
@@ -94,6 +96,7 @@ void AugurPanel::combo (const juce::Rectangle<int>& r, const char* id)
     addAndMakeVisible (cb);
     cb->setBounds (r);
     comboAtts.add (new juce::AudioProcessorValueTreeState::ComboBoxAttachment (proc.apvts, id, *cb));
+    learnClicks.add (*cb, id);
 }
 
 AugurPanel::AugurPanel (Augur6Processor& p) : proc (p)
@@ -257,12 +260,18 @@ AugurPanel::AugurPanel (Augur6Processor& p) : proc (p)
     };
     presetButton.onClick = [this] { showPresetMenu(); };
 
+    learnLabel.setFont (toota::font (13.0f, 2));
+    learnLabel.setColour (juce::Label::textColourId, toota::coral);
+    learnLabel.setJustificationType (juce::Justification::centredLeft);
+    learnLabel.setBounds (872, 15, 320, 30);
+    addAndMakeVisible (learnLabel);
     setSize (kWidth, kHeight);
     refresh();
 }
 
 AugurPanel::~AugurPanel()
 {
+    learnClicks.removeAll();
     for (auto* s : sliders) s->setLookAndFeel (nullptr);
     for (auto* t : toggles) t->setLookAndFeel (nullptr);
     for (auto* c : combos)  c->setLookAndFeel (nullptr);
@@ -304,6 +313,11 @@ void AugurPanel::showPresetMenu()
 
 void AugurPanel::refresh()
 {
+    {
+        const auto& ml = proc.midiLearn;
+        const juce::String t = ml.isLearning() ? "MIDI LEARN: turn a knob for " + ml.learningName() : juce::String();
+        if (learnLabel.getText() != t) learnLabel.setText (t, juce::dontSendNotification);
+    }
     const auto& list = factoryPresets();
     const int idx = proc.currentPreset.load();
     juce::String text = juce::isPositiveAndBelow (idx, (int) list.size())

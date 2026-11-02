@@ -81,6 +81,8 @@ private:
     FilterView filterView;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, presetButton;
     juce::String lastPresetText;
+    toota::MidiLearnClicks learnClicks { proc.midiLearn };
+    juce::Label learnLabel;
     juce::Rectangle<int> ledArea;
     bool lastLed = false;
     juce::TooltipWindow tips { this, 700 };

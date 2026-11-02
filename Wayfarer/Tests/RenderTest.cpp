@@ -255,6 +255,35 @@ int main (int argc, char** argv)
         }
         check (same, "state round-trip");
     }
+
+    // ---- MIDI Learn: default knob map, learning a new CC, mappings saved with the set
+    {
+        WayfarerProcessor a, b;
+        a.prepareToPlay (48000.0, 256);
+        auto send = [] (juce::AudioProcessor& p, int cc, int v)
+        {
+            juce::AudioBuffer<float> buf (2, 256); buf.clear();
+            juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::controllerEvent (1, cc, v), 0);
+            p.processBlock (buf, mb);
+        };
+        auto norm = [] (juce::AudioProcessor& p, const char* id)
+        {
+            for (auto* prm : p.getParameters())
+                if (auto* r = dynamic_cast<juce::RangedAudioParameter*> (prm); r && r->getParameterID() == id) return r->getValue();
+            return -1.0f;
+        };
+        send (a, 74, 0);   const float lo = norm (a, pid::cutoff);
+        send (a, 74, 127); const float hi = norm (a, pid::cutoff);
+        bool ok = lo < 0.01f && hi > 0.99f && a.midiLearn.ccFor (pid::cutoff) == 74;
+        a.midiLearn.learn (pid::res);
+        send (a, 20, 64);                                   // learning: assigns CC20, does not move it yet
+        send (a, 20, 127);
+        ok = ok && a.midiLearn.ccFor (pid::res) == 20 && norm (a, pid::res) > 0.99f;
+        juce::MemoryBlock st; a.getStateInformation (st);
+        b.setStateInformation (st.getData(), (int) st.getSize());
+        ok = ok && b.midiLearn.ccFor (pid::res) == 20 && b.midiLearn.ccFor (pid::cutoff) == 74;
+        check (ok, "midi learn: default map, learn, saved with the set");
+    }
     // ---- CPU
     {
         WayfarerProcessor p; p.loadPreset (0);

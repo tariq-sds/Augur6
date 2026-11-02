@@ -127,6 +127,36 @@ int main (int argc, char** argv)
         if (! same) ++failures;
     }
 
+
+    // ---- MIDI Learn: default knob map, learning a new CC, mappings saved with the set
+    {
+        Augur6Processor a, b;
+        a.prepareToPlay (48000.0, 256);
+        auto send = [] (juce::AudioProcessor& p, int cc, int v)
+        {
+            juce::AudioBuffer<float> buf (2, 256); buf.clear();
+            juce::MidiBuffer mb; mb.addEvent (juce::MidiMessage::controllerEvent (1, cc, v), 0);
+            p.processBlock (buf, mb);
+        };
+        auto norm = [] (juce::AudioProcessor& p, const char* id)
+        {
+            for (auto* prm : p.getParameters())
+                if (auto* r = dynamic_cast<juce::RangedAudioParameter*> (prm); r && r->getParameterID() == id) return r->getValue();
+            return -1.0f;
+        };
+        send (a, 74, 0);   const float lo = norm (a, pid::lpfCutoff);
+        send (a, 74, 127); const float hi = norm (a, pid::lpfCutoff);
+        bool ok = lo < 0.01f && hi > 0.99f && a.midiLearn.ccFor (pid::lpfCutoff) == 74;
+        a.midiLearn.learn (pid::lpfRes);
+        send (a, 20, 64);                                   // learning: assigns CC20, does not move it yet
+        send (a, 20, 127);
+        ok = ok && a.midiLearn.ccFor (pid::lpfRes) == 20 && norm (a, pid::lpfRes) > 0.99f;
+        juce::MemoryBlock st; a.getStateInformation (st);
+        b.setStateInformation (st.getData(), (int) st.getSize());
+        ok = ok && b.midiLearn.ccFor (pid::lpfRes) == 20 && b.midiLearn.ccFor (pid::lpfCutoff) == 74;
+        std::printf ("midi learn: %s\n", ok ? "ok" : "FAILED"); if (! ok) ++failures;
+    }
+
     // Editor snapshot (needs a display, e.g. xvfb-run)
     if (auto* snap = std::getenv ("AUGUR_SNAPSHOT"))
     {

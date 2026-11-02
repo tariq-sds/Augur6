@@ -14,6 +14,7 @@ Use the **< >** arrows or click the program name to pick by category. All factor
 
 | Category | Presets |
 |---|---|
+| House Chords | Deep House Stab, Warm Organ Chords, House Keys, 90s Piano Stab, Detroit Strings, Dub Chord, Soft Pad Chords, Garage Chord Pluck, Minor 9 Keys, Filtered Disco Chords, Velvet Stab, Sunset Pad |
 | Pads | Velvet Horizon, Glass Cathedral, Slow Bloom, Dusk Strings, Night Bus PWM, Balearic Sunset, Afterglow |
 | Brass | Gold Brass, Fanfare Stack, Soft Horns, Brass '82 |
 | Keys | Ivory Poly, Electric Bell, Clav Funk, Hollow Organ, Velour Keys |
@@ -25,6 +26,24 @@ Use the **< >** arrows or click the program name to pick by category. All factor
 
 To keep your own sounds, tweak a preset and use Live's **Save Preset** button on the device title bar.
 Edited presets show a `*` after the name. Everything is saved with your Live Set.
+
+## MIDI Learn (your keyboard's knobs)
+
+Right-click any knob, switch or menu and choose **MIDI Learn**, then turn a knob on your keyboard. Right-click
+again to see which CC it is on, forget it, or reset everything to the default map. Mappings are saved with your
+Live Set. The default map works straight away on most keyboards that send the standard sound-controller CCs:
+
+| CC | Control | CC | Control |
+|---|---|---|---|
+| 74 | Filter cutoff | 80 | Filter env attack |
+| 71 | Filter resonance | 81 | Filter env decay |
+| 70 | Filter env amount | 82 | Filter env sustain |
+| 73 | Amp attack | 83 | Filter env release |
+| 75 | Amp decay | 79 | Amp sustain |
+| 72 | Amp release | | |
+
+If your keyboard sends different CCs, learn them once and save the Live Set (or a Live preset) so they come back.
+Every control is also an automatable parameter, so Live's own **MIDI Map** mode works on it too.
 
 ## Signal flow
 
